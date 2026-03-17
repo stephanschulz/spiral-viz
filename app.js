@@ -97,7 +97,7 @@ class SpiralVisualizer {
                         el.value = this[id];
                         const valEl = document.getElementById(id + 'Val');
                         if (valEl) {
-                            const dec = sliderConfigs[id] || 0;
+                            const dec = sliderDecimals[id] || 0;
                             valEl.textContent = this[id].toFixed(dec);
                         }
                     }
