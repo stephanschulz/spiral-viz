@@ -156,6 +156,12 @@ label:has(input[type="checkbox"]):hover {
     padding-left: 4px;
 }
 
+.checkbox-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 8px;
+}
+
 /* Info Displays */
 .info-box {
     font-size: 11px;
