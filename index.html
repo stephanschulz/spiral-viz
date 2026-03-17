@@ -30,8 +30,8 @@
                 <h3>Spiral Geometry</h3>
                 <label>Start Angle (deg): <span id="startAngleVal">0</span></label>
                 <input type="range" id="startAngle" min="0" max="360" step="1" value="0">
-                <label>Inner Diameter (mm): <span id="innerDiameterVal">0</span></label>
-                <input type="range" id="innerDiameter" min="0" max="500" step="5" value="0">
+                <label>Inner Diameter (mm): <span id="innerDiameterVal">200</span></label>
+                <input type="range" id="innerDiameter" min="0" max="500" step="5" value="200">
                 <label>Spiral Spacing (mm): <span id="spiralSpacingVal">22</span></label>
                 <input type="range" id="spiralSpacing" min="10" max="300" step="1" value="22">
                 <label>Tube Diameter (mm): <span id="tubeDiameterVal">22</span></label>
@@ -40,6 +40,8 @@
 
             <div class="control-section">
                 <h3>Segments</h3>
+                <label>LED Tube Amount (segments): <span id="segmentMountsVal">75</span></label>
+                <input type="range" id="segmentMounts" min="1" max="200" step="1" value="75">
                 <label>Segment Length (cm): <span id="segmentLengthVal">200</span></label>
                 <input type="range" id="segmentLength" min="10" max="1000" step="5" value="200">
                 <label>Segment Gap (mm): <span id="segmentGapVal">0</span></label>

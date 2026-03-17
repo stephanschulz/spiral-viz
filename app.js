@@ -10,12 +10,13 @@ class SpiralVisualizer {
 
         // Spiral parameters (GUI units)
         this.startAngle = 0;        // degrees - inner starting angle
-        this.innerDiameter = 0;     // mm - minimum inner diameter
+        this.innerDiameter = 200;   // mm - minimum inner diameter
         this.spiralSpacing = 22;    // mm gap between tube edges
         this.tubeDiameter = 22;     // mm
 
         // Segment parameters
         this.segmentLength = 200;   // cm per segment
+        this.segmentMounts = 75;    // desired LED tube amount (segments)
         this.segmentGap = 0;        // mm gap between segments
 
         // LED parameters (user sets LEDs/m; pitch derived)
@@ -65,13 +66,14 @@ class SpiralVisualizer {
         img.onload = () => {
             this.backgroundImage = img;
             this.prepareBackgroundImageData(img);
-            this.rebuildImageColorCache();
+            if (this.showImage) this.rebuildImageColorCache();
             this.draw();
         };
         img.onerror = () => {
             this.backgroundImage = null;
             this.backgroundImageData = null;
-            this.rebuildImageColorCache();
+            this.cachedLedImageColors = [];
+            this.cachedPixelGroupColors = [];
         };
         img.src = 'images/RBG.jpg';
         this.setupEventListeners();
@@ -87,7 +89,7 @@ class SpiralVisualizer {
     get settingsKeys() {
         return {
             sliders: ['wallWidth', 'wallHeight', 'startAngle', 'innerDiameter',
-                       'spiralSpacing', 'tubeDiameter', 'segmentLength', 'segmentGap',
+                       'spiralSpacing', 'tubeDiameter', 'segmentMounts', 'segmentLength', 'segmentGap',
                        'ledsPerMeter', 'pixelsPerMeter', 'wattsPerMeter', 'gridSize'],
             checkboxes: ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage']
         };
@@ -111,9 +113,12 @@ class SpiralVisualizer {
             const data = JSON.parse(raw);
             const sliderDecimals = {
                 wallWidth: 1, wallHeight: 1, startAngle: 0, innerDiameter: 0,
-                spiralSpacing: 0, tubeDiameter: 0, segmentLength: 0, segmentGap: 0,
+                spiralSpacing: 0, tubeDiameter: 0, segmentMounts: 0, segmentLength: 0, segmentGap: 0,
                 ledsPerMeter: 1, pixelsPerMeter: 0, wattsPerMeter: 1, gridSize: 1,
             };
+            if (data.segmentMounts === undefined && data.targetSegments !== undefined) {
+                data.segmentMounts = data.targetSegments;
+            }
             if (data.ledPitch !== undefined && data.ledsPerMeter === undefined) {
                 data.ledsPerMeter = 1000 / parseFloat(data.ledPitch);
             }
@@ -151,6 +156,7 @@ class SpiralVisualizer {
             innerDiameter:  { decimals: 0 },
             spiralSpacing:  { decimals: 0 },
             tubeDiameter:   { decimals: 0 },
+            segmentMounts:  { decimals: 0 },
             segmentLength:  { decimals: 0 },
             segmentGap:     { decimals: 0 },
             ledsPerMeter:   { decimals: 1 },
@@ -172,7 +178,13 @@ class SpiralVisualizer {
                     if (!isNaN(max)) v = Math.min(max, v);
                     el.value = v;
                 }
-                if (!isNaN(v)) this[id] = v;
+                if (!isNaN(v)) {
+                    if (id === 'segmentMounts') {
+                        v = Math.max(1, Math.round(v));
+                        el.value = v;
+                    }
+                    this[id] = v;
+                }
                 const valEl = document.getElementById(id + 'Val');
                 if (valEl) valEl.textContent = parseFloat(el.value).toFixed(cfg.decimals);
                 this.computeSpiral();
@@ -185,9 +197,24 @@ class SpiralVisualizer {
             const el = document.getElementById(id);
             el.addEventListener('change', () => {
                 this[id] = el.checked;
+                if (id === 'showImage') {
+                    if (this.showImage && this.backgroundImageData) {
+                        this.rebuildImageColorCache();
+                    } else {
+                        this.cachedLedImageColors = [];
+                        this.cachedPixelGroupColors = [];
+                    }
+                }
                 this.draw();
             });
         });
+
+        const segmentMountsEl = document.getElementById('segmentMounts');
+        if (segmentMountsEl) {
+            segmentMountsEl.addEventListener('wheel', e => {
+                e.preventDefault();
+            }, { passive: false });
+        }
 
         document.getElementById('resetViewBtn').addEventListener('click', () => {
             this.scale = 1;
@@ -276,6 +303,7 @@ class SpiralVisualizer {
         const tubeDiamM = this.tubeDiameter / 1000;
         const centerToCenter = gapM + tubeDiamM;
         const segLenM = this.segmentLength / 100;
+        const desiredSegments = Math.max(1, Math.round(this.segmentMounts || 1));
         const segGapM = this.segmentGap / 1000;
         const b = centerToCenter / (2 * Math.PI);
 
@@ -284,8 +312,6 @@ class SpiralVisualizer {
         // theta0 such that r(theta0) = innerRadiusM: theta0 = innerRadiusM / b
         // but we also want the spiral to visually start at startAngle
         const theta0 = innerRadiusM > 0 ? innerRadiusM / b : 0;
-
-        const maxRadius = Math.min(this.wallWidth, this.wallHeight) / 2 * 0.95;
 
         this.curvePoints = [];
         this.segments = [];  // [{startIdx, endIdx}, ...] - only tube regions
@@ -308,7 +334,10 @@ class SpiralVisualizer {
             r: r0
         });
 
-        while (true) {
+        let safetyIter = 0;
+        const maxIterations = 3000000;
+        while (this.segments.length < desiredSegments && safetyIter < maxIterations) {
+            safetyIter++;
             const r = b * theta;
             let dTheta;
             if (r < 0.001) {
@@ -346,6 +375,7 @@ class SpiralVisualizer {
                 if (segAccum >= segLenM) {
                     // End this segment
                     this.segments.push({ startIdx: curSegStart, endIdx: this.curvePoints.length - 1 });
+                    if (this.segments.length >= desiredSegments) break;
                     if (segGapM > 0) {
                         inGap = true;
                         gapAccum = 0;
@@ -357,11 +387,10 @@ class SpiralVisualizer {
             }
 
             theta = nextTheta;
-            if (rNext > maxRadius) break;
         }
 
-        // Close any open (unfinished) segment
-        if (!inGap) {
+        // Close open segment only when we did not reach the requested count.
+        if (this.segments.length < desiredSegments && !inGap) {
             const lastIdx = this.curvePoints.length - 1;
             if (lastIdx > curSegStart) {
                 this.segments.push({ startIdx: curSegStart, endIdx: lastIdx });
@@ -371,7 +400,21 @@ class SpiralVisualizer {
         this.spiralTotalLength = totalLength;
         this.spiralSegmentCount = this.segments.length;
         this.spiralTurns = (theta - theta0) / (2 * Math.PI);
-        this.rebuildImageColorCache();
+        if (this.showImage && this.backgroundImageData) {
+            this.rebuildImageColorCache();
+        } else {
+            this.cachedLedImageColors = [];
+            this.cachedPixelGroupColors = [];
+        }
+        const segmentMountsEl = document.getElementById('segmentMounts');
+        const segmentMountsValEl = document.getElementById('segmentMountsVal');
+        if (segmentMountsEl && segmentMountsValEl) {
+            const maxMounts = Math.max(1, parseInt(segmentMountsEl.max, 10) || 1);
+            const clamped = Math.max(1, Math.min(maxMounts, Math.round(this.segmentMounts || 1)));
+            this.segmentMounts = clamped;
+            if (document.activeElement !== segmentMountsEl) segmentMountsEl.value = String(clamped);
+            segmentMountsValEl.textContent = String(clamped);
+        }
 
         // Count LEDs: first at half pitch, then every pitch per segment
         const ledPitchM = this.ledPitch / 1000;
