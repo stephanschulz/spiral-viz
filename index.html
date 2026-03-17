@@ -18,20 +18,30 @@
 
             <div class="control-section">
                 <h3>Wall</h3>
-                <label>Wall Width (m): <span id="wallWidthVal">3.00</span></label>
+                <label>Width (m): <span id="wallWidthVal">3.0</span></label>
                 <input type="range" id="wallWidth" min="1" max="6" step="0.1" value="3">
-                <label>Wall Height (m): <span id="wallHeightVal">3.00</span></label>
+                <label>Height (m): <span id="wallHeightVal">3.0</span></label>
                 <input type="range" id="wallHeight" min="1" max="6" step="0.1" value="3">
             </div>
 
             <div class="control-section">
                 <h3>Spiral Geometry</h3>
+                <label>Start Angle (deg): <span id="startAngleVal">0</span></label>
+                <input type="range" id="startAngle" min="0" max="360" step="1" value="0">
+                <label>Inner Diameter (mm): <span id="innerDiameterVal">0</span></label>
+                <input type="range" id="innerDiameter" min="0" max="500" step="5" value="0">
                 <label>Spiral Spacing (mm): <span id="spiralSpacingVal">22</span></label>
                 <input type="range" id="spiralSpacing" min="10" max="300" step="1" value="22">
-                <label>Segment Length (cm): <span id="segmentLengthVal">200</span></label>
-                <input type="range" id="segmentLength" min="10" max="500" step="5" value="200">
                 <label>Tube Diameter (mm): <span id="tubeDiameterVal">22</span></label>
                 <input type="range" id="tubeDiameter" min="5" max="50" step="1" value="22">
+            </div>
+
+            <div class="control-section">
+                <h3>Segments</h3>
+                <label>Segment Length (cm): <span id="segmentLengthVal">200</span></label>
+                <input type="range" id="segmentLength" min="10" max="500" step="5" value="200">
+                <label>Segment Gap (mm): <span id="segmentGapVal">0</span></label>
+                <input type="range" id="segmentGap" min="0" max="50" step="1" value="0">
             </div>
 
             <div class="control-section">
@@ -41,7 +51,15 @@
             </div>
 
             <div class="control-section">
+                <h3>Power</h3>
+                <label>Watts per Meter: <span id="wattsPerMeterVal">14.4</span></label>
+                <input type="range" id="wattsPerMeter" min="1" max="60" step="0.1" value="14.4">
+            </div>
+
+            <div class="control-section">
                 <h3>Display Options</h3>
+                <label>Grid Size (m): <span id="gridSizeVal">1.0</span></label>
+                <input type="range" id="gridSize" min="0.1" max="2" step="0.1" value="1.0">
                 <div class="checkbox-grid">
                     <label><input type="checkbox" id="showLeds" checked> LEDs</label>
                     <label><input type="checkbox" id="showSegments"> Segments</label>
@@ -58,6 +76,7 @@
             <div class="control-section">
                 <h3>Info</h3>
                 <div id="spiralLength" class="info-stat highlight">Spiral Length: --</div>
+                <div id="totalWatts" class="info-stat highlight">Total Power: --</div>
                 <div id="segmentCount" class="info-stat">Segments: --</div>
                 <div id="ledCount" class="info-stat">Total LEDs: --</div>
                 <div id="turnsCount" class="info-stat">Turns: --</div>

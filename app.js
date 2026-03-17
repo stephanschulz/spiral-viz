@@ -9,21 +9,29 @@ class SpiralVisualizer {
         this.wallHeight = 3.0;
 
         // Spiral parameters (GUI units)
-        this.spiralSpacing = 22;    // mm between spiral rounds
-        this.segmentLength = 200;   // cm per segment
+        this.startAngle = 0;        // degrees - inner starting angle
+        this.innerDiameter = 0;     // mm - minimum inner diameter
+        this.spiralSpacing = 22;    // mm gap between tube edges
         this.tubeDiameter = 22;     // mm
 
-        // LED parameters (GUI units)
+        // Segment parameters
+        this.segmentLength = 200;   // cm per segment
+        this.segmentGap = 0;        // mm gap between segments
+
+        // LED parameters
         this.ledPitch = 10.4;       // mm between LEDs
         this.showLeds = true;
 
+        // Power
+        this.wattsPerMeter = 14.4;  // W/m
+
         // Display options
+        this.gridSize = 1.0;        // meters
         this.showSegments = true;
         this.showGrid = true;
         this.showWallBorder = true;
 
         // View / pan / zoom
-        // originX/originY = screen position of world (0,0)
         this.scale = 1;
         this.originX = 0;
         this.originY = 0;
@@ -32,8 +40,8 @@ class SpiralVisualizer {
         this.panStartY = 0;
 
         // Computed spiral data
-        this.curvePoints = [];       // dense points along the spiral curve (in meters)
-        this.segmentIndices = [];    // indices into curvePoints where segments begin/end
+        this.curvePoints = [];
+        this.segmentIndices = [];
         this.spiralTotalLength = 0;
         this.spiralSegmentCount = 0;
         this.spiralLedCount = 0;
@@ -51,14 +59,18 @@ class SpiralVisualizer {
     }
 
     setupEventListeners() {
-        // Sliders
         const sliderConfigs = {
-            wallWidth:     { decimals: 1 },
-            wallHeight:    { decimals: 1 },
-            spiralSpacing: { decimals: 0 },
-            segmentLength: { decimals: 0 },
-            tubeDiameter:  { decimals: 0 },
-            ledPitch:      { decimals: 1 },
+            wallWidth:      { decimals: 1 },
+            wallHeight:     { decimals: 1 },
+            startAngle:     { decimals: 0 },
+            innerDiameter:  { decimals: 0 },
+            spiralSpacing:  { decimals: 0 },
+            tubeDiameter:   { decimals: 0 },
+            segmentLength:  { decimals: 0 },
+            segmentGap:     { decimals: 0 },
+            ledPitch:       { decimals: 1 },
+            wattsPerMeter:  { decimals: 1 },
+            gridSize:       { decimals: 1 },
         };
         Object.keys(sliderConfigs).forEach(id => {
             const el = document.getElementById(id);
@@ -72,7 +84,6 @@ class SpiralVisualizer {
             });
         });
 
-        // Checkboxes
         ['showLeds', 'showSegments', 'showGrid', 'showWallBorder'].forEach(id => {
             const el = document.getElementById(id);
             el.addEventListener('change', () => {
@@ -81,7 +92,6 @@ class SpiralVisualizer {
             });
         });
 
-        // Reset view
         document.getElementById('resetViewBtn').addEventListener('click', () => {
             this.scale = 1;
             this.originX = this.canvas.width / 2;
@@ -89,7 +99,6 @@ class SpiralVisualizer {
             this.draw();
         });
 
-        // Pan & zoom
         this.canvas.addEventListener('mousedown', e => {
             this.isPanning = true;
             this.panStartX = e.clientX - this.originX;
@@ -114,7 +123,6 @@ class SpiralVisualizer {
             const rect = this.canvas.getBoundingClientRect();
             const mx = e.clientX - rect.left;
             const my = e.clientY - rect.top;
-            // Zoom centered on mouse: keep the world point under cursor fixed
             this.originX = mx - (mx - this.originX) * zoomFactor;
             this.originY = my - (my - this.originY) * zoomFactor;
             this.scale *= zoomFactor;
@@ -158,30 +166,46 @@ class SpiralVisualizer {
     }
 
     computeSpiral() {
-        // Archimedean spiral: r = b * theta
-        // spacing = gap between tube edges, so center-to-center = gap + tubeDiameter
-        const gapM = this.spiralSpacing / 1000;          // mm -> meters
-        const tubeDiamM = this.tubeDiameter / 1000;      // mm -> meters
-        const centerToCenter = gapM + tubeDiamM;         // center-to-center between turns
-        const segLenM = this.segmentLength / 100;         // cm -> meters
+        // Archimedean spiral: r = r0 + b * (theta - theta0)
+        // where r0 = inner radius, theta0 = start angle
+        const gapM = this.spiralSpacing / 1000;
+        const tubeDiamM = this.tubeDiameter / 1000;
+        const centerToCenter = gapM + tubeDiamM;
+        const segLenM = this.segmentLength / 100;
+        const segGapM = this.segmentGap / 1000;
         const b = centerToCenter / (2 * Math.PI);
+
+        const innerRadiusM = (this.innerDiameter / 1000) / 2;
+        const startThetaRad = this.startAngle * Math.PI / 180;
+        // theta0 such that r(theta0) = innerRadiusM: theta0 = innerRadiusM / b
+        // but we also want the spiral to visually start at startAngle
+        const theta0 = innerRadiusM > 0 ? innerRadiusM / b : 0;
 
         const maxRadius = Math.min(this.wallWidth, this.wallHeight) / 2 * 0.95;
 
-        // Generate dense curve points for smooth rendering
-        // Use a small angular step that produces ~2mm arc steps
-        this.curvePoints = [{ x: 0, y: 0, theta: 0, r: 0 }];
-        this.segmentIndices = [0]; // first segment starts at index 0
+        this.curvePoints = [];
+        this.segments = [];  // [{startIdx, endIdx}, ...] - only tube regions
 
-        let theta = 0;
+        let theta = theta0;
         let totalLength = 0;
-        let segAccum = 0;  // accumulated length toward next segment boundary
-        const targetStep = 0.002; // ~2mm arc step for smoothness
+        let segAccum = 0;
+        let inGap = false;
+        let gapAccum = 0;
+        let curSegStart = 0;
+        const targetStep = 0.002;
+
+        // First point
+        const r0 = b * theta;
+        const angleOffset = startThetaRad - theta0;
+        this.curvePoints.push({
+            x: r0 * Math.cos(theta + angleOffset),
+            y: r0 * Math.sin(theta + angleOffset),
+            theta: theta,
+            r: r0
+        });
 
         while (true) {
             const r = b * theta;
-            // Adaptive angular step: ds ≈ r * dTheta for large r
-            // For small r, use a fixed small angle
             let dTheta;
             if (r < 0.001) {
                 dTheta = 0.05;
@@ -194,60 +218,84 @@ class SpiralVisualizer {
             const nextTheta = theta + dTheta;
             const rNext = b * nextTheta;
 
-            // Arc length for this step
             const dr = rNext - r;
             const ds = Math.sqrt(dr * dr + (r * dTheta) * (r * dTheta));
 
-            totalLength += ds;
-            segAccum += ds;
+            const x = rNext * Math.cos(nextTheta + angleOffset);
+            const y = rNext * Math.sin(nextTheta + angleOffset);
 
-            const x = rNext * Math.cos(nextTheta);
-            const y = rNext * Math.sin(nextTheta);
-            this.curvePoints.push({ x, y, theta: nextTheta, r: rNext });
+            if (inGap) {
+                gapAccum += ds;
+                if (gapAccum >= segGapM) {
+                    // Gap ended - start new segment from this point
+                    inGap = false;
+                    segAccum = 0;
+                    this.curvePoints.push({ x, y, theta: nextTheta, r: rNext });
+                    curSegStart = this.curvePoints.length - 1;
+                }
+                // Don't add points during the gap - they are skipped
+            } else {
+                totalLength += ds;
+                segAccum += ds;
+                this.curvePoints.push({ x, y, theta: nextTheta, r: rNext });
 
-            // Check if we crossed a segment boundary
-            if (segAccum >= segLenM) {
-                this.segmentIndices.push(this.curvePoints.length - 1);
-                segAccum = 0;
+                if (segAccum >= segLenM) {
+                    // End this segment
+                    this.segments.push({ startIdx: curSegStart, endIdx: this.curvePoints.length - 1 });
+                    if (segGapM > 0) {
+                        inGap = true;
+                        gapAccum = 0;
+                    } else {
+                        segAccum = 0;
+                        curSegStart = this.curvePoints.length - 1;
+                    }
+                }
             }
 
             theta = nextTheta;
-
             if (rNext > maxRadius) break;
         }
 
-        // Add final index as last segment boundary
-        const lastIdx = this.curvePoints.length - 1;
-        if (this.segmentIndices[this.segmentIndices.length - 1] !== lastIdx) {
-            this.segmentIndices.push(lastIdx);
+        // Close any open (unfinished) segment
+        if (!inGap) {
+            const lastIdx = this.curvePoints.length - 1;
+            if (lastIdx > curSegStart) {
+                this.segments.push({ startIdx: curSegStart, endIdx: lastIdx });
+            }
         }
 
         this.spiralTotalLength = totalLength;
-        this.spiralSegmentCount = Math.max(0, this.segmentIndices.length - 1);
-        this.spiralTurns = theta / (2 * Math.PI);
-        this.spiralLedCount = Math.floor(totalLength / (this.ledPitch / 1000)); // mm -> meters
+        this.spiralSegmentCount = this.segments.length;
+        this.spiralTurns = (theta - theta0) / (2 * Math.PI);
+        this.spiralLedCount = Math.floor(totalLength / (this.ledPitch / 1000));
+
+        const totalWatts = this.spiralTotalLength * this.wattsPerMeter;
 
         // Update info
         document.getElementById('spiralLength').textContent =
-            `Spiral Length: ${this.spiralTotalLength.toFixed(2)} m (${(this.spiralTotalLength * 100).toFixed(1)} cm)`;
+            `Spiral Length: ${this.spiralTotalLength.toFixed(2)} m`;
+        document.getElementById('totalWatts').textContent =
+            `Total Power: ${totalWatts.toFixed(1)} W`;
         document.getElementById('segmentCount').textContent =
             `Segments: ${this.spiralSegmentCount}`;
         document.getElementById('ledCount').textContent =
-            `Total LEDs: ${this.spiralLedCount}`;
+            `Total LEDs (pixels): ${this.spiralLedCount}`;
         document.getElementById('turnsCount').textContent =
             `Turns: ${this.spiralTurns.toFixed(1)}`;
 
-        const ledsPerSeg = (this.segmentLength * 10) / this.ledPitch; // both effectively in mm
+        const ledsPerSeg = (this.segmentLength * 10) / this.ledPitch;
+        const ledsPerMeter = 1000 / this.ledPitch;
         document.getElementById('infoBox').textContent =
-            `Tube diameter: ${this.tubeDiameter} mm\n` +
-            `Spiral spacing: ${this.spiralSpacing} mm\n` +
-            `Segment length: ${this.segmentLength} cm\n` +
-            `LED pitch: ${this.ledPitch} mm\n` +
-            `LEDs per segment: ${ledsPerSeg.toFixed(1)}\n` +
+            `Total length: ${this.spiralTotalLength.toFixed(2)} m\n` +
+            `Total power: ${totalWatts.toFixed(1)} W\n` +
+            `Total LEDs: ${this.spiralLedCount}\n` +
+            `Segments: ${this.spiralSegmentCount}\n` +
+            `Turns: ${this.spiralTurns.toFixed(1)}\n` +
+            `LEDs/m: ${ledsPerMeter.toFixed(1)}\n` +
+            `LEDs/segment: ${ledsPerSeg.toFixed(1)}\n` +
             `Wall: ${this.wallWidth} x ${this.wallHeight} m`;
     }
 
-    // Compute normal (perpendicular to tangent) at curve point index i
     normalAt(i) {
         const pts = this.curvePoints;
         let dx, dy;
@@ -282,8 +330,8 @@ class SpiralVisualizer {
         ctx.strokeStyle = '#e0e0e0';
         ctx.lineWidth = 1;
 
-        const step = 0.5;
-        const extent = Math.max(this.wallWidth, this.wallHeight) / 2 + 0.5;
+        const step = this.gridSize;
+        const extent = Math.max(this.wallWidth, this.wallHeight) / 2 + step;
         for (let v = -extent; v <= extent; v += step) {
             const p1 = this.worldToCanvas(v, -extent);
             const p2 = this.worldToCanvas(v, extent);
@@ -327,6 +375,7 @@ class SpiralVisualizer {
         if (this.curvePoints.length < 2) return;
         const ctx = this.ctx;
         const tubeRadiusM = (this.tubeDiameter / 1000) / 2;
+        const segGapM = this.segmentGap / 1000;
 
         ctx.save();
 
@@ -347,92 +396,112 @@ class SpiralVisualizer {
             });
         }
 
-        // Fill tube body
-        ctx.beginPath();
-        let cp = this.worldToCanvas(outerPts[0].x, outerPts[0].y);
-        ctx.moveTo(cp.x, cp.y);
-        for (let i = 1; i < outerPts.length; i++) {
-            cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
-            ctx.lineTo(cp.x, cp.y);
-        }
-        for (let i = innerPts.length - 1; i >= 0; i--) {
-            cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
-            ctx.lineTo(cp.x, cp.y);
-        }
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
-        ctx.fill();
+        // Draw each segment as an independent tube piece
+        for (let s = 0; s < this.segments.length; s++) {
+            const { startIdx: i0, endIdx: i1 } = this.segments[s];
 
-        // Outer edge line
-        ctx.beginPath();
-        cp = this.worldToCanvas(outerPts[0].x, outerPts[0].y);
-        ctx.moveTo(cp.x, cp.y);
-        for (let i = 1; i < outerPts.length; i++) {
-            cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
-            ctx.lineTo(cp.x, cp.y);
-        }
-        ctx.strokeStyle = '#2266cc';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+            // Fill tube body
+            ctx.beginPath();
+            let cp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+            ctx.moveTo(cp.x, cp.y);
+            for (let i = i0 + 1; i <= i1; i++) {
+                cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
+                ctx.lineTo(cp.x, cp.y);
+            }
+            for (let i = i1; i >= i0; i--) {
+                cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                ctx.lineTo(cp.x, cp.y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
+            ctx.fill();
 
-        // Inner edge line
-        ctx.beginPath();
-        cp = this.worldToCanvas(innerPts[0].x, innerPts[0].y);
-        ctx.moveTo(cp.x, cp.y);
-        for (let i = 1; i < innerPts.length; i++) {
-            cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
-            ctx.lineTo(cp.x, cp.y);
-        }
-        ctx.strokeStyle = '#2266cc';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Draw segment boundary lines (perpendicular across tube at each segment joint)
-        if (this.showSegments) {
-            ctx.strokeStyle = 'rgba(255, 100, 50, 0.7)';
+            // Outer edge
+            ctx.beginPath();
+            cp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+            ctx.moveTo(cp.x, cp.y);
+            for (let i = i0 + 1; i <= i1; i++) {
+                cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
+                ctx.lineTo(cp.x, cp.y);
+            }
+            ctx.strokeStyle = '#2266cc';
             ctx.lineWidth = 1.5;
-            for (const idx of this.segmentIndices) {
-                const po = this.worldToCanvas(outerPts[idx].x, outerPts[idx].y);
-                const pi = this.worldToCanvas(innerPts[idx].x, innerPts[idx].y);
+            ctx.stroke();
+
+            // Inner edge
+            ctx.beginPath();
+            cp = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
+            ctx.moveTo(cp.x, cp.y);
+            for (let i = i0 + 1; i <= i1; i++) {
+                cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                ctx.lineTo(cp.x, cp.y);
+            }
+            ctx.strokeStyle = '#2266cc';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // End caps: perpendicular lines at start and end of each segment
+            if (this.showSegments) {
+                const isFirst = (s === 0);
+                const isLast = (s === this.segments.length - 1);
+
+                // Start cap
+                const ps = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+                const pe = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
                 ctx.beginPath();
-                ctx.moveTo(po.x, po.y);
-                ctx.lineTo(pi.x, pi.y);
+                ctx.moveTo(ps.x, ps.y);
+                ctx.lineTo(pe.x, pe.y);
+                ctx.strokeStyle = isFirst ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
+                ctx.lineWidth = isFirst ? 3 : 1.5;
+                ctx.stroke();
+
+                // End cap
+                const ps2 = this.worldToCanvas(outerPts[i1].x, outerPts[i1].y);
+                const pe2 = this.worldToCanvas(innerPts[i1].x, innerPts[i1].y);
+                ctx.beginPath();
+                ctx.moveTo(ps2.x, ps2.y);
+                ctx.lineTo(pe2.x, pe2.y);
+                ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
+                ctx.lineWidth = isLast ? 3 : 1.5;
                 ctx.stroke();
             }
         }
 
-        // Draw LEDs along the curve
+        // Draw LEDs (only within segments)
         if (this.showLeds) {
-            const ledPitchM = this.ledPitch / 1000; // mm -> meters
-            let accumDist = 0;
+            const ledPitchM = this.ledPitch / 1000;
+            for (let s = 0; s < this.segments.length; s++) {
+                const { startIdx: i0, endIdx: i1 } = this.segments[s];
+                let accumDist = 0;
 
-            for (let i = 1; i < this.curvePoints.length; i++) {
-                const prev = this.curvePoints[i - 1];
-                const curr = this.curvePoints[i];
-                const dx = curr.x - prev.x;
-                const dy = curr.y - prev.y;
-                const stepLen = Math.sqrt(dx * dx + dy * dy);
-                if (stepLen === 0) continue;
+                for (let i = i0 + 1; i <= i1; i++) {
+                    const prev = this.curvePoints[i - 1];
+                    const curr = this.curvePoints[i];
+                    const dx = curr.x - prev.x;
+                    const dy = curr.y - prev.y;
+                    const stepLen = Math.sqrt(dx * dx + dy * dy);
+                    if (stepLen === 0) continue;
 
-                const ux = dx / stepLen;
-                const uy = dy / stepLen;
+                    const ux = dx / stepLen;
+                    const uy = dy / stepLen;
 
-                let d = ledPitchM - accumDist;
-                while (d <= stepLen) {
-                    const lx = prev.x + ux * d;
-                    const ly = prev.y + uy * d;
-                    const lp = this.worldToCanvas(lx, ly);
-                    const ledSize = Math.max(1.5, this.worldScale(0.003));
-                    ctx.beginPath();
-                    ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
-                    ctx.fillStyle = '#ffcc00';
-                    ctx.fill();
-                    ctx.strokeStyle = '#cc9900';
-                    ctx.lineWidth = 0.5;
-                    ctx.stroke();
-                    d += ledPitchM;
+                    let d = ledPitchM - accumDist;
+                    while (d <= stepLen) {
+                        const lx = prev.x + ux * d;
+                        const ly = prev.y + uy * d;
+                        const lp = this.worldToCanvas(lx, ly);
+                        const ledSize = Math.max(1.5, this.worldScale(0.003));
+                        ctx.beginPath();
+                        ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
+                        ctx.fillStyle = '#ffcc00';
+                        ctx.fill();
+                        ctx.strokeStyle = '#cc9900';
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+                        d += ledPitchM;
+                    }
+                    accumDist = stepLen - (d - ledPitchM);
                 }
-                accumDist = stepLen - (d - ledPitchM);
             }
         }
 
@@ -455,7 +524,6 @@ class SpiralVisualizer {
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
-        // Sample every Nth curve point for hit-testing (curve is dense)
         const step = Math.max(1, Math.floor(this.curvePoints.length / 500));
         let minDist = Infinity;
         let closestIdx = -1;
@@ -471,15 +539,13 @@ class SpiralVisualizer {
 
         if (minDist < 30 && closestIdx >= 0) {
             const p = this.curvePoints[closestIdx];
-            // Figure out which segment this point belongs to
             let segNum = 0;
-            for (let s = 0; s < this.segmentIndices.length - 1; s++) {
-                if (closestIdx >= this.segmentIndices[s] && closestIdx < this.segmentIndices[s + 1]) {
+            for (let s = 0; s < this.segments.length; s++) {
+                if (closestIdx >= this.segments[s].startIdx && closestIdx <= this.segments[s].endIdx) {
                     segNum = s + 1;
                     break;
                 }
             }
-            // Cumulative length (approximate from index proportion)
             const frac = closestIdx / (this.curvePoints.length - 1);
             const cumLen = frac * this.spiralTotalLength;
 
