@@ -133,6 +133,33 @@ input[type="range"]::-moz-range-thumb {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+.number-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr;
+    align-items: center;
+    gap: 6px 8px;
+}
+.number-row label {
+    margin-bottom: 0;
+}
+.number-row input {
+    margin-bottom: 0;
+}
+input[type="number"] {
+    width: 100%;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+}
+input[type="number"]:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.2);
+}
+
 input[type="checkbox"] {
     margin-right: 8px;
     cursor: pointer;
@@ -162,37 +189,32 @@ label:has(input[type="checkbox"]):hover {
     gap: 2px 8px;
 }
 
-/* Info Displays */
+/* Info Displays – all inside single yellow box */
 .info-box {
     font-size: 11px;
     color: #555;
     margin-top: 6px;
-    padding: 6px 8px;
+    padding: 8px 10px;
     background-color: #fff3cd;
     border: 1px solid #ffc107;
     border-radius: 3px;
-    white-space: pre-line;
     line-height: 1.6;
     max-height: 200px;
     overflow-y: auto;
 }
-
-.info-stat {
-    font-size: 11px;
-    color: #555;
+.info-box .info-line {
     margin-bottom: 4px;
-    padding: 4px 8px;
-    background-color: #f8f9fa;
-    border-radius: 3px;
-    border-left: 2px solid #007bff;
+    padding: 0;
+    background: none;
+    border: none;
 }
-
-.info-stat.highlight {
-    border-left: 2px solid #28a745;
+.info-box .info-line:last-child {
+    margin-bottom: 0;
+}
+.info-box .info-line.highlight {
     font-weight: 600;
-    animation: none;
+    color: #333;
 }
-
 /* Buttons */
 .btn {
     width: 100%;

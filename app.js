@@ -131,14 +131,25 @@ class SpiralVisualizer {
         };
         Object.keys(sliderConfigs).forEach(id => {
             const el = document.getElementById(id);
+            if (!el) return;
             const cfg = sliderConfigs[id];
-            el.addEventListener('input', () => {
-                this[id] = parseFloat(el.value);
-                document.getElementById(id + 'Val').textContent =
-                    parseFloat(el.value).toFixed(cfg.decimals);
+            const isNumber = el.type === 'number';
+            const handler = () => {
+                let v = parseFloat(el.value);
+                if (isNumber && !isNaN(v)) {
+                    const min = parseFloat(el.min);
+                    const max = parseFloat(el.max);
+                    if (!isNaN(min)) v = Math.max(min, v);
+                    if (!isNaN(max)) v = Math.min(max, v);
+                    el.value = v;
+                }
+                if (!isNaN(v)) this[id] = v;
+                const valEl = document.getElementById(id + 'Val');
+                if (valEl) valEl.textContent = parseFloat(el.value).toFixed(cfg.decimals);
                 this.computeSpiral();
                 this.draw();
-            });
+            };
+            el.addEventListener(isNumber ? 'change' : 'input', handler);
         });
 
         ['showLeds', 'showGrid', 'showWallBorder'].forEach(id => {
@@ -352,6 +363,9 @@ class SpiralVisualizer {
         const totalWatts = this.spiralTotalLength * this.wattsPerMeter;
 
         // Update info
+        const ledsPerSeg = (this.segmentLength * 10) / this.ledPitch;
+        const ledsPerMeter = 1000 / this.ledPitch;
+
         document.getElementById('spiralLength').textContent =
             `Spiral Length: ${this.spiralTotalLength.toFixed(2)} m`;
         document.getElementById('totalWatts').textContent =
@@ -359,21 +373,13 @@ class SpiralVisualizer {
         document.getElementById('segmentCount').textContent =
             `Segments: ${this.spiralSegmentCount}`;
         document.getElementById('ledCount').textContent =
-            `Total LEDs (pixels): ${this.spiralLedCount}`;
+            `Total LEDs: ${this.spiralLedCount}`;
         document.getElementById('turnsCount').textContent =
             `Turns: ${this.spiralTurns.toFixed(1)}`;
-
-        const ledsPerSeg = (this.segmentLength * 10) / this.ledPitch;
-        const ledsPerMeter = 1000 / this.ledPitch;
-        document.getElementById('infoBox').textContent =
-            `Total length: ${this.spiralTotalLength.toFixed(2)} m\n` +
-            `Total power: ${totalWatts.toFixed(1)} W\n` +
-            `Total LEDs: ${this.spiralLedCount}\n` +
-            `Segments: ${this.spiralSegmentCount}\n` +
-            `Turns: ${this.spiralTurns.toFixed(1)}\n` +
-            `LEDs/m: ${ledsPerMeter.toFixed(1)}\n` +
-            `LEDs/segment: ${ledsPerSeg.toFixed(1)}\n` +
-            `Wall: ${this.wallWidth} x ${this.wallHeight} m`;
+        document.getElementById('ledsPerMeter').textContent =
+            `LEDs/m: ${ledsPerMeter.toFixed(1)}`;
+        document.getElementById('ledsPerSegment').textContent =
+            `LEDs/segment: ${ledsPerSeg.toFixed(1)}`;
     }
 
     normalAt(i) {
