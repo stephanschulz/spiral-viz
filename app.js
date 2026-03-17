@@ -22,6 +22,7 @@ class SpiralVisualizer {
         this.ledsPerMeter = 96.2;   // LEDs per meter → pitch = 1000/ledsPerMeter mm
         this.pixelsPerMeter = 30;   // pixels per meter (multiple LEDs can = 1 pixel)
         this.showLeds = true;
+        this.showTube = true;
         this.showPixelGroups = true;
 
         // Power
@@ -31,6 +32,10 @@ class SpiralVisualizer {
         this.gridSize = 1.0;        // meters
         this.showGrid = true;
         this.showWallBorder = true;
+        this.showImage = true;      // image behind spiral, visible only in LED circles
+
+        this.backgroundImage = null;
+        this.backgroundImageData = null;
 
         // View / pan / zoom
         this.scale = 1;
@@ -54,6 +59,17 @@ class SpiralVisualizer {
 
     init() {
         this.loadSettings();
+        const img = new Image();
+        img.onload = () => {
+            this.backgroundImage = img;
+            this.prepareBackgroundImageData(img);
+            this.draw();
+        };
+        img.onerror = () => {
+            this.backgroundImage = null;
+            this.backgroundImageData = null;
+        };
+        img.src = 'images/RBG.jpg';
         this.setupEventListeners();
         window.addEventListener('resize', () => this.resizeCanvas());
         this.resizeCanvas();
@@ -69,7 +85,7 @@ class SpiralVisualizer {
             sliders: ['wallWidth', 'wallHeight', 'startAngle', 'innerDiameter',
                        'spiralSpacing', 'tubeDiameter', 'segmentLength', 'segmentGap',
                        'ledsPerMeter', 'pixelsPerMeter', 'wattsPerMeter', 'gridSize'],
-            checkboxes: ['showLeds', 'showPixelGroups', 'showGrid', 'showWallBorder']
+            checkboxes: ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage']
         };
     }
 
@@ -161,7 +177,7 @@ class SpiralVisualizer {
             el.addEventListener(isNumber ? 'change' : 'input', handler);
         });
 
-        ['showLeds', 'showPixelGroups', 'showGrid', 'showWallBorder'].forEach(id => {
+        ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage'].forEach(id => {
             const el = document.getElementById(id);
             el.addEventListener('change', () => {
                 this[id] = el.checked;
@@ -424,6 +440,75 @@ class SpiralVisualizer {
         this.drawSpiral();
     }
 
+    drawImageToWall() {
+        if (!this.backgroundImage) return;
+        const ctx = this.ctx;
+        const hw = this.wallWidth / 2;
+        const hh = this.wallHeight / 2;
+        const tl = this.worldToCanvas(-hw, -hh);
+        const br = this.worldToCanvas(hw, hh);
+        const w = br.x - tl.x;
+        const h = br.y - tl.y;
+        ctx.drawImage(this.backgroundImage, 0, 0, this.backgroundImage.width, this.backgroundImage.height, tl.x, tl.y, w, h);
+    }
+
+    prepareBackgroundImageData(img) {
+        const sampleCanvas = document.createElement('canvas');
+        sampleCanvas.width = img.width;
+        sampleCanvas.height = img.height;
+        const sampleCtx = sampleCanvas.getContext('2d');
+        sampleCtx.drawImage(img, 0, 0);
+        this.backgroundImageData = sampleCtx.getImageData(0, 0, img.width, img.height);
+    }
+
+    averageImageColorInLedCircle(cx, cy, radius, map) {
+        if (!this.backgroundImageData || !map || radius <= 0) return null;
+        const data = this.backgroundImageData.data;
+        const imgW = this.backgroundImageData.width;
+        const imgH = this.backgroundImageData.height;
+
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let count = 0;
+
+        const minX = Math.floor(cx - radius);
+        const maxX = Math.ceil(cx + radius);
+        const minY = Math.floor(cy - radius);
+        const maxY = Math.ceil(cy + radius);
+        const r2 = radius * radius;
+
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                const dx = x - cx;
+                const dy = y - cy;
+                if (dx * dx + dy * dy > r2) continue;
+
+                const tx = (x - map.tlX) / map.wallW;
+                const ty = (y - map.tlY) / map.wallH;
+                if (tx < 0 || tx > 1 || ty < 0 || ty > 1) continue;
+
+                const ix = Math.min(imgW - 1, Math.max(0, Math.floor(tx * imgW)));
+                const iy = Math.min(imgH - 1, Math.max(0, Math.floor(ty * imgH)));
+                const idx = (iy * imgW + ix) * 4;
+                const a = data[idx + 3] / 255;
+                if (a <= 0) continue;
+
+                rSum += data[idx] * a;
+                gSum += data[idx + 1] * a;
+                bSum += data[idx + 2] * a;
+                count += a;
+            }
+        }
+
+        if (count === 0) return null;
+        return {
+            r: Math.round(rSum / count),
+            g: Math.round(gSum / count),
+            b: Math.round(bSum / count)
+        };
+    }
+
     drawGrid() {
         if (!this.showGrid) return;
         const ctx = this.ctx;
@@ -501,69 +586,71 @@ class SpiralVisualizer {
         for (let s = 0; s < this.segments.length; s++) {
             const { startIdx: i0, endIdx: i1 } = this.segments[s];
 
-            // Fill tube body
-            ctx.beginPath();
-            let cp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
-            ctx.moveTo(cp.x, cp.y);
-            for (let i = i0 + 1; i <= i1; i++) {
-                cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
-                ctx.lineTo(cp.x, cp.y);
+            if (this.showTube) {
+                // Fill tube body
+                ctx.beginPath();
+                let cp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+                ctx.moveTo(cp.x, cp.y);
+                for (let i = i0 + 1; i <= i1; i++) {
+                    cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
+                    ctx.lineTo(cp.x, cp.y);
+                }
+                for (let i = i1; i >= i0; i--) {
+                    cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                    ctx.lineTo(cp.x, cp.y);
+                }
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
+                ctx.fill();
+
+                // Outer edge
+                ctx.beginPath();
+                cp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+                ctx.moveTo(cp.x, cp.y);
+                for (let i = i0 + 1; i <= i1; i++) {
+                    cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
+                    ctx.lineTo(cp.x, cp.y);
+                }
+                ctx.strokeStyle = '#2266cc';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Inner edge
+                ctx.beginPath();
+                cp = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
+                ctx.moveTo(cp.x, cp.y);
+                for (let i = i0 + 1; i <= i1; i++) {
+                    cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                    ctx.lineTo(cp.x, cp.y);
+                }
+                ctx.strokeStyle = '#2266cc';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // End caps: perpendicular lines at start and end of each segment
+                const isFirst = (s === 0);
+                const isLast = (s === this.segments.length - 1);
+
+                // Start cap
+                const ps = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+                const pe = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
+                ctx.beginPath();
+                ctx.moveTo(ps.x, ps.y);
+                ctx.lineTo(pe.x, pe.y);
+                ctx.strokeStyle = isFirst ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
+                ctx.lineWidth = isFirst ? 3 : 1.5;
+                ctx.stroke();
+
+                // End cap
+                const ps2 = this.worldToCanvas(outerPts[i1].x, outerPts[i1].y);
+                const pe2 = this.worldToCanvas(innerPts[i1].x, innerPts[i1].y);
+                ctx.beginPath();
+                ctx.moveTo(ps2.x, ps2.y);
+                ctx.lineTo(pe2.x, pe2.y);
+                ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
+                ctx.lineWidth = isLast ? 3 : 1.5;
+                ctx.stroke();
             }
-            for (let i = i1; i >= i0; i--) {
-                cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
-                ctx.lineTo(cp.x, cp.y);
-            }
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
-            ctx.fill();
-
-            // Outer edge
-            ctx.beginPath();
-            cp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
-            ctx.moveTo(cp.x, cp.y);
-            for (let i = i0 + 1; i <= i1; i++) {
-                cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
-                ctx.lineTo(cp.x, cp.y);
-            }
-            ctx.strokeStyle = '#2266cc';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // Inner edge
-            ctx.beginPath();
-            cp = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
-            ctx.moveTo(cp.x, cp.y);
-            for (let i = i0 + 1; i <= i1; i++) {
-                cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
-                ctx.lineTo(cp.x, cp.y);
-            }
-            ctx.strokeStyle = '#2266cc';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // End caps: perpendicular lines at start and end of each segment
-            const isFirst = (s === 0);
-            const isLast = (s === this.segments.length - 1);
-
-            // Start cap
-            const ps = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
-            const pe = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
-            ctx.beginPath();
-            ctx.moveTo(ps.x, ps.y);
-            ctx.lineTo(pe.x, pe.y);
-            ctx.strokeStyle = isFirst ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
-            ctx.lineWidth = isFirst ? 3 : 1.5;
-            ctx.stroke();
-
-            // End cap
-            const ps2 = this.worldToCanvas(outerPts[i1].x, outerPts[i1].y);
-            const pe2 = this.worldToCanvas(innerPts[i1].x, innerPts[i1].y);
-            ctx.beginPath();
-            ctx.moveTo(ps2.x, ps2.y);
-            ctx.lineTo(pe2.x, pe2.y);
-            ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
-            ctx.lineWidth = isLast ? 3 : 1.5;
-            ctx.stroke();
 
             // Pixel-group arc segments (each pixel = short arc along tube)
             if (this.showPixelGroups && this.pixelsPerMeter > 0) {
@@ -604,14 +691,30 @@ class SpiralVisualizer {
             }
         }
 
-        // Draw LEDs (only within segments)
-        // First LED at half pitch from segment start, then every pitch
-        if (this.showLeds) {
+        // Draw LED positions (only within segments)
+        // Image pixels are controlled by showImage; circle overlay by showLeds.
+        const drawImagePixels = this.showImage && this.backgroundImage;
+        const drawLedCircles = this.showLeds;
+        if (drawImagePixels || drawLedCircles) {
             const ledPitchM = this.ledPitch / 1000;
             const halfPitchM = ledPitchM / 2;
+            const ledSize = Math.max(1.5, this.worldScale(0.003));
+            let imageMap = null;
+            if (drawImagePixels) {
+                const hw = this.wallWidth / 2;
+                const hh = this.wallHeight / 2;
+                const tl = this.worldToCanvas(-hw, -hh);
+                const br = this.worldToCanvas(hw, hh);
+                imageMap = {
+                    tlX: tl.x,
+                    tlY: tl.y,
+                    wallW: br.x - tl.x,
+                    wallH: br.y - tl.y
+                };
+            }
+
             for (let s = 0; s < this.segments.length; s++) {
                 const { startIdx: i0, endIdx: i1 } = this.segments[s];
-                // nextLedDist = distance from segment start to next LED
                 let nextLedDist = halfPitchM;
                 let walked = 0;
 
@@ -634,14 +737,30 @@ class SpiralVisualizer {
                         const lx = prev.x + ux * along;
                         const ly = prev.y + uy * along;
                         const lp = this.worldToCanvas(lx, ly);
-                        const ledSize = Math.max(1.5, this.worldScale(0.003));
-                        ctx.beginPath();
-                        ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
-                        ctx.fillStyle = '#ffcc00';
-                        ctx.fill();
-                        ctx.strokeStyle = '#cc9900';
-                        ctx.lineWidth = 0.5;
-                        ctx.stroke();
+
+                        if (drawImagePixels) {
+                            const avg = this.averageImageColorInLedCircle(lp.x, lp.y, ledSize, imageMap);
+                            if (avg) {
+                                ctx.beginPath();
+                                ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
+                                ctx.fillStyle = `rgb(${avg.r}, ${avg.g}, ${avg.b})`;
+                                ctx.fill();
+                            }
+                        }
+
+                        if (drawLedCircles) {
+                            ctx.beginPath();
+                            ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
+                            if (!drawImagePixels) {
+                                ctx.fillStyle = '#ffcc00';
+                                ctx.fill();
+                                ctx.strokeStyle = '#cc9900';
+                            } else {
+                                ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+                            }
+                            ctx.lineWidth = 0.5;
+                            ctx.stroke();
+                        }
                         nextLedDist += ledPitchM;
                     }
                 }
