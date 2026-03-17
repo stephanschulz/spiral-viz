@@ -18,9 +18,11 @@ class SpiralVisualizer {
         this.segmentLength = 200;   // cm per segment
         this.segmentGap = 0;        // mm gap between segments
 
-        // LED parameters
-        this.ledPitch = 10.4;       // mm between LEDs
+        // LED parameters (user sets LEDs/m; pitch derived)
+        this.ledsPerMeter = 96.2;   // LEDs per meter → pitch = 1000/ledsPerMeter mm
+        this.pixelsPerMeter = 30;   // pixels per meter (multiple LEDs can = 1 pixel)
         this.showLeds = true;
+        this.showPixelGroups = true;
 
         // Power
         this.wattsPerMeter = 14.4;  // W/m
@@ -44,6 +46,7 @@ class SpiralVisualizer {
         this.spiralTotalLength = 0;
         this.spiralSegmentCount = 0;
         this.spiralLedCount = 0;
+        this.spiralPixelCount = 0;
         this.spiralTurns = 0;
 
         this.init();
@@ -58,13 +61,15 @@ class SpiralVisualizer {
         this.draw();
     }
 
+    get ledPitch() { return 1000 / this.ledsPerMeter; }  // mm, derived from LEDs/m
+
     // Settings keys: sliders + checkboxes that should be saved/loaded
     get settingsKeys() {
         return {
             sliders: ['wallWidth', 'wallHeight', 'startAngle', 'innerDiameter',
                        'spiralSpacing', 'tubeDiameter', 'segmentLength', 'segmentGap',
-                       'ledPitch', 'wattsPerMeter', 'gridSize'],
-            checkboxes: ['showLeds', 'showGrid', 'showWallBorder']
+                       'ledsPerMeter', 'pixelsPerMeter', 'wattsPerMeter', 'gridSize'],
+            checkboxes: ['showLeds', 'showPixelGroups', 'showGrid', 'showWallBorder']
         };
     }
 
@@ -87,8 +92,11 @@ class SpiralVisualizer {
             const sliderDecimals = {
                 wallWidth: 1, wallHeight: 1, startAngle: 0, innerDiameter: 0,
                 spiralSpacing: 0, tubeDiameter: 0, segmentLength: 0, segmentGap: 0,
-                ledPitch: 1, wattsPerMeter: 1, gridSize: 1,
+                ledsPerMeter: 1, pixelsPerMeter: 0, wattsPerMeter: 1, gridSize: 1,
             };
+            if (data.ledPitch !== undefined && data.ledsPerMeter === undefined) {
+                data.ledsPerMeter = 1000 / parseFloat(data.ledPitch);
+            }
             for (const id of this.settingsKeys.sliders) {
                 if (data[id] !== undefined) {
                     this[id] = parseFloat(data[id]);
@@ -125,7 +133,8 @@ class SpiralVisualizer {
             tubeDiameter:   { decimals: 0 },
             segmentLength:  { decimals: 0 },
             segmentGap:     { decimals: 0 },
-            ledPitch:       { decimals: 1 },
+            ledsPerMeter:   { decimals: 1 },
+            pixelsPerMeter: { decimals: 0 },
             wattsPerMeter:  { decimals: 1 },
             gridSize:       { decimals: 1 },
         };
@@ -152,7 +161,7 @@ class SpiralVisualizer {
             el.addEventListener(isNumber ? 'change' : 'input', handler);
         });
 
-        ['showLeds', 'showGrid', 'showWallBorder'].forEach(id => {
+        ['showLeds', 'showPixelGroups', 'showGrid', 'showWallBorder'].forEach(id => {
             const el = document.getElementById(id);
             el.addEventListener('change', () => {
                 this[id] = el.checked;
@@ -359,12 +368,12 @@ class SpiralVisualizer {
             }
         }
         this.spiralLedCount = totalLeds;
+        this.spiralPixelCount = Math.round(this.spiralTotalLength * this.pixelsPerMeter);
 
         const totalWatts = this.spiralTotalLength * this.wattsPerMeter;
 
         // Update info
         const ledsPerSeg = (this.segmentLength * 10) / this.ledPitch;
-        const ledsPerMeter = 1000 / this.ledPitch;
 
         document.getElementById('spiralLength').textContent =
             `Spiral Length: ${this.spiralTotalLength.toFixed(2)} m`;
@@ -374,12 +383,18 @@ class SpiralVisualizer {
             `Segments: ${this.spiralSegmentCount}`;
         document.getElementById('ledCount').textContent =
             `Total LEDs: ${this.spiralLedCount}`;
-        document.getElementById('turnsCount').textContent =
-            `Turns: ${this.spiralTurns.toFixed(1)}`;
-        document.getElementById('ledsPerMeter').textContent =
-            `LEDs/m: ${ledsPerMeter.toFixed(1)}`;
+        document.getElementById('ledsPerMeterDisp').textContent =
+            `LEDs/m: ${this.ledsPerMeter.toFixed(1)}`;
+        document.getElementById('pitchDisp').textContent =
+            `Pitch: ${this.ledPitch.toFixed(2)} mm`;
+        document.getElementById('pixelsPerMeterDisp').textContent =
+            `Pixels/m: ${this.pixelsPerMeter}`;
+        document.getElementById('pixelCount').textContent =
+            `Total pixels: ${this.spiralPixelCount}`;
         document.getElementById('ledsPerSegment').textContent =
             `LEDs/segment: ${ledsPerSeg.toFixed(1)}`;
+        document.getElementById('turnsCount').textContent =
+            `Turns: ${this.spiralTurns.toFixed(1)}`;
     }
 
     normalAt(i) {
@@ -549,6 +564,44 @@ class SpiralVisualizer {
             ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
             ctx.lineWidth = isLast ? 3 : 1.5;
             ctx.stroke();
+
+            // Pixel-group arc segments (each pixel = short arc along tube)
+            if (this.showPixelGroups && this.pixelsPerMeter > 0) {
+                const pixelLengthM = 1 / this.pixelsPerMeter;
+                const pixelRanges = [];
+                let walked = 0;
+                let nextBoundary = pixelLengthM;
+                let rangeStart = i0;
+                for (let i = i0 + 1; i <= i1; i++) {
+                    const prev = this.curvePoints[i - 1];
+                    const curr = this.curvePoints[i];
+                    const stepLen = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+                    walked += stepLen;
+                    while (walked >= nextBoundary && nextBoundary > 0) {
+                        pixelRanges.push({ startIdx: rangeStart, endIdx: i });
+                        rangeStart = i;
+                        nextBoundary += pixelLengthM;
+                    }
+                }
+                if (rangeStart <= i1) pixelRanges.push({ startIdx: rangeStart, endIdx: i1 });
+
+                pixelRanges.forEach(({ startIdx: pa, endIdx: pb }, idx) => {
+                    ctx.beginPath();
+                    let cp = this.worldToCanvas(outerPts[pa].x, outerPts[pa].y);
+                    ctx.moveTo(cp.x, cp.y);
+                    for (let i = pa + 1; i <= pb; i++) {
+                        cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
+                        ctx.lineTo(cp.x, cp.y);
+                    }
+                    for (let i = pb; i >= pa; i--) {
+                        cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                        ctx.lineTo(cp.x, cp.y);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = idx % 2 === 0 ? 'rgba(255, 220, 120, 0.5)' : 'rgba(255, 180, 80, 0.45)';
+                    ctx.fill();
+                });
+            }
         }
 
         // Draw LEDs (only within segments)
