@@ -9,7 +9,7 @@ class SpiralVisualizer {
         this.wallHeight = 3.0;
 
         // Spiral parameters (GUI units)
-        this.spiralSpacing = 80;    // mm between spiral rounds
+        this.spiralSpacing = 22;    // mm between spiral rounds
         this.segmentLength = 200;   // cm per segment
         this.tubeDiameter = 22;     // mm
 
@@ -23,9 +23,10 @@ class SpiralVisualizer {
         this.showWallBorder = true;
 
         // View / pan / zoom
+        // originX/originY = screen position of world (0,0)
         this.scale = 1;
-        this.offsetX = 0;
-        this.offsetY = 0;
+        this.originX = 0;
+        this.originY = 0;
         this.isPanning = false;
         this.panStartX = 0;
         this.panStartY = 0;
@@ -83,21 +84,21 @@ class SpiralVisualizer {
         // Reset view
         document.getElementById('resetViewBtn').addEventListener('click', () => {
             this.scale = 1;
-            this.offsetX = 0;
-            this.offsetY = 0;
+            this.originX = this.canvas.width / 2;
+            this.originY = this.canvas.height / 2;
             this.draw();
         });
 
         // Pan & zoom
         this.canvas.addEventListener('mousedown', e => {
             this.isPanning = true;
-            this.panStartX = e.clientX - this.offsetX;
-            this.panStartY = e.clientY - this.offsetY;
+            this.panStartX = e.clientX - this.originX;
+            this.panStartY = e.clientY - this.originY;
         });
         this.canvas.addEventListener('mousemove', e => {
             if (this.isPanning) {
-                this.offsetX = e.clientX - this.panStartX;
-                this.offsetY = e.clientY - this.panStartY;
+                this.originX = e.clientX - this.panStartX;
+                this.originY = e.clientY - this.panStartY;
                 this.draw();
             }
             this.handleTooltip(e);
@@ -113,8 +114,9 @@ class SpiralVisualizer {
             const rect = this.canvas.getBoundingClientRect();
             const mx = e.clientX - rect.left;
             const my = e.clientY - rect.top;
-            this.offsetX = mx - (mx - this.offsetX) * zoomFactor;
-            this.offsetY = my - (my - this.offsetY) * zoomFactor;
+            // Zoom centered on mouse: keep the world point under cursor fixed
+            this.originX = mx - (mx - this.originX) * zoomFactor;
+            this.originY = my - (my - this.originY) * zoomFactor;
             this.scale *= zoomFactor;
             this.draw();
         }, { passive: false });
@@ -122,28 +124,37 @@ class SpiralVisualizer {
 
     resizeCanvas() {
         const container = this.canvas.parentElement;
+        const oldW = this.canvas.width;
+        const oldH = this.canvas.height;
         this.canvas.width = container.clientWidth;
         this.canvas.height = container.clientHeight;
+        if (!this._initializedOrigin) {
+            this.originX = this.canvas.width / 2;
+            this.originY = this.canvas.height / 2;
+            this._initializedOrigin = true;
+        } else {
+            this.originX += (this.canvas.width - oldW) / 2;
+            this.originY += (this.canvas.height - oldH) / 2;
+        }
         this.draw();
     }
 
     worldToCanvas(wx, wy) {
-        const wallMaxDim = Math.max(this.wallWidth, this.wallHeight);
-        const canvasMinDim = Math.min(this.canvas.width, this.canvas.height);
-        const ppm = (canvasMinDim * 0.85) / wallMaxDim;
-        const cx = this.canvas.width / 2 + this.offsetX;
-        const cy = this.canvas.height / 2 + this.offsetY;
+        const ppm = this.getPPM();
         return {
-            x: cx + wx * ppm * this.scale,
-            y: cy + wy * ppm * this.scale
+            x: this.originX + wx * ppm * this.scale,
+            y: this.originY + wy * ppm * this.scale
         };
     }
 
-    worldScale(meters) {
+    getPPM() {
         const wallMaxDim = Math.max(this.wallWidth, this.wallHeight);
         const canvasMinDim = Math.min(this.canvas.width, this.canvas.height);
-        const ppm = (canvasMinDim * 0.85) / wallMaxDim;
-        return meters * ppm * this.scale;
+        return (canvasMinDim * 0.85) / wallMaxDim;
+    }
+
+    worldScale(meters) {
+        return meters * this.getPPM() * this.scale;
     }
 
     computeSpiral() {
