@@ -68,6 +68,19 @@ body {
     padding-bottom: 4px;
 }
 
+.repo-link {
+    display: inline-block;
+    margin-bottom: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #007bff;
+    text-decoration: none;
+}
+
+.repo-link:hover {
+    text-decoration: underline;
+}
+
 .control-panel h3 {
     font-size: 12px;
     margin-bottom: 6px;
