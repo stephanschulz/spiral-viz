@@ -9,3 +9,7 @@
 - 2nd line Watts/m: in info box replace with total watts used
 - in info box should also shown leds/m based of the pitch  
 - segment gab should have background color and no spiral lines
+
+
+- show total segment count in info box.
+- place info box at top of gui

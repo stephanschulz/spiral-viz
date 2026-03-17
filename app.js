@@ -27,7 +27,6 @@ class SpiralVisualizer {
 
         // Display options
         this.gridSize = 1.0;        // meters
-        this.showSegments = true;
         this.showGrid = true;
         this.showWallBorder = true;
 
@@ -41,7 +40,7 @@ class SpiralVisualizer {
 
         // Computed spiral data
         this.curvePoints = [];
-        this.segmentIndices = [];
+        this.segments = [];
         this.spiralTotalLength = 0;
         this.spiralSegmentCount = 0;
         this.spiralLedCount = 0;
@@ -51,11 +50,69 @@ class SpiralVisualizer {
     }
 
     init() {
+        this.loadSettings();
         this.setupEventListeners();
         window.addEventListener('resize', () => this.resizeCanvas());
         this.resizeCanvas();
         this.computeSpiral();
         this.draw();
+    }
+
+    // Settings keys: sliders + checkboxes that should be saved/loaded
+    get settingsKeys() {
+        return {
+            sliders: ['wallWidth', 'wallHeight', 'startAngle', 'innerDiameter',
+                       'spiralSpacing', 'tubeDiameter', 'segmentLength', 'segmentGap',
+                       'ledPitch', 'wattsPerMeter', 'gridSize'],
+            checkboxes: ['showLeds', 'showGrid', 'showWallBorder']
+        };
+    }
+
+    saveSettings() {
+        const data = {};
+        for (const id of this.settingsKeys.sliders) {
+            data[id] = this[id];
+        }
+        for (const id of this.settingsKeys.checkboxes) {
+            data[id] = this[id];
+        }
+        localStorage.setItem('spiralVizSettings', JSON.stringify(data));
+    }
+
+    loadSettings() {
+        const raw = localStorage.getItem('spiralVizSettings');
+        if (!raw) return;
+        try {
+            const data = JSON.parse(raw);
+            const sliderDecimals = {
+                wallWidth: 1, wallHeight: 1, startAngle: 0, innerDiameter: 0,
+                spiralSpacing: 0, tubeDiameter: 0, segmentLength: 0, segmentGap: 0,
+                ledPitch: 1, wattsPerMeter: 1, gridSize: 1,
+            };
+            for (const id of this.settingsKeys.sliders) {
+                if (data[id] !== undefined) {
+                    this[id] = parseFloat(data[id]);
+                    const el = document.getElementById(id);
+                    if (el) {
+                        el.value = this[id];
+                        const valEl = document.getElementById(id + 'Val');
+                        if (valEl) {
+                            const dec = sliderConfigs[id] || 0;
+                            valEl.textContent = this[id].toFixed(dec);
+                        }
+                    }
+                }
+            }
+            for (const id of this.settingsKeys.checkboxes) {
+                if (data[id] !== undefined) {
+                    this[id] = !!data[id];
+                    const el = document.getElementById(id);
+                    if (el) el.checked = this[id];
+                }
+            }
+        } catch (e) {
+            // ignore corrupt data
+        }
     }
 
     setupEventListeners() {
@@ -84,7 +141,7 @@ class SpiralVisualizer {
             });
         });
 
-        ['showLeds', 'showSegments', 'showGrid', 'showWallBorder'].forEach(id => {
+        ['showLeds', 'showGrid', 'showWallBorder'].forEach(id => {
             const el = document.getElementById(id);
             el.addEventListener('change', () => {
                 this[id] = el.checked;
@@ -97,6 +154,13 @@ class SpiralVisualizer {
             this.originX = this.canvas.width / 2;
             this.originY = this.canvas.height / 2;
             this.draw();
+        });
+
+        document.getElementById('saveSettingsBtn').addEventListener('click', () => {
+            this.saveSettings();
+            const btn = document.getElementById('saveSettingsBtn');
+            btn.textContent = 'Saved!';
+            setTimeout(() => { btn.textContent = 'Save Settings'; }, 1500);
         });
 
         this.canvas.addEventListener('mousedown', e => {
@@ -267,7 +331,23 @@ class SpiralVisualizer {
         this.spiralTotalLength = totalLength;
         this.spiralSegmentCount = this.segments.length;
         this.spiralTurns = (theta - theta0) / (2 * Math.PI);
-        this.spiralLedCount = Math.floor(totalLength / (this.ledPitch / 1000));
+
+        // Count LEDs: first at half pitch, then every pitch per segment
+        const ledPitchM = this.ledPitch / 1000;
+        let totalLeds = 0;
+        for (const seg of this.segments) {
+            let segLen = 0;
+            for (let i = seg.startIdx + 1; i <= seg.endIdx; i++) {
+                const prev = this.curvePoints[i - 1];
+                const curr = this.curvePoints[i];
+                segLen += Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+            }
+            // First LED at halfPitch, then every pitch
+            if (segLen >= ledPitchM / 2) {
+                totalLeds += 1 + Math.floor((segLen - ledPitchM / 2) / ledPitchM);
+            }
+        }
+        this.spiralLedCount = totalLeds;
 
         const totalWatts = this.spiralTotalLength * this.wattsPerMeter;
 
@@ -441,38 +521,40 @@ class SpiralVisualizer {
             ctx.stroke();
 
             // End caps: perpendicular lines at start and end of each segment
-            if (this.showSegments) {
-                const isFirst = (s === 0);
-                const isLast = (s === this.segments.length - 1);
+            const isFirst = (s === 0);
+            const isLast = (s === this.segments.length - 1);
 
-                // Start cap
-                const ps = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
-                const pe = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
-                ctx.beginPath();
-                ctx.moveTo(ps.x, ps.y);
-                ctx.lineTo(pe.x, pe.y);
-                ctx.strokeStyle = isFirst ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
-                ctx.lineWidth = isFirst ? 3 : 1.5;
-                ctx.stroke();
+            // Start cap
+            const ps = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+            const pe = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
+            ctx.beginPath();
+            ctx.moveTo(ps.x, ps.y);
+            ctx.lineTo(pe.x, pe.y);
+            ctx.strokeStyle = isFirst ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
+            ctx.lineWidth = isFirst ? 3 : 1.5;
+            ctx.stroke();
 
-                // End cap
-                const ps2 = this.worldToCanvas(outerPts[i1].x, outerPts[i1].y);
-                const pe2 = this.worldToCanvas(innerPts[i1].x, innerPts[i1].y);
-                ctx.beginPath();
-                ctx.moveTo(ps2.x, ps2.y);
-                ctx.lineTo(pe2.x, pe2.y);
-                ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
-                ctx.lineWidth = isLast ? 3 : 1.5;
-                ctx.stroke();
-            }
+            // End cap
+            const ps2 = this.worldToCanvas(outerPts[i1].x, outerPts[i1].y);
+            const pe2 = this.worldToCanvas(innerPts[i1].x, innerPts[i1].y);
+            ctx.beginPath();
+            ctx.moveTo(ps2.x, ps2.y);
+            ctx.lineTo(pe2.x, pe2.y);
+            ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
+            ctx.lineWidth = isLast ? 3 : 1.5;
+            ctx.stroke();
         }
 
         // Draw LEDs (only within segments)
+        // First LED at half pitch from segment start, then every pitch
         if (this.showLeds) {
             const ledPitchM = this.ledPitch / 1000;
+            const halfPitchM = ledPitchM / 2;
             for (let s = 0; s < this.segments.length; s++) {
                 const { startIdx: i0, endIdx: i1 } = this.segments[s];
-                let accumDist = 0;
+                // nextLedDist = distance from segment start to next LED
+                let nextLedDist = halfPitchM;
+                let walked = 0;
 
                 for (let i = i0 + 1; i <= i1; i++) {
                     const prev = this.curvePoints[i - 1];
@@ -484,11 +566,14 @@ class SpiralVisualizer {
 
                     const ux = dx / stepLen;
                     const uy = dy / stepLen;
+                    const walkedBefore = walked;
 
-                    let d = ledPitchM - accumDist;
-                    while (d <= stepLen) {
-                        const lx = prev.x + ux * d;
-                        const ly = prev.y + uy * d;
+                    walked += stepLen;
+
+                    while (nextLedDist <= walked) {
+                        const along = nextLedDist - walkedBefore;
+                        const lx = prev.x + ux * along;
+                        const ly = prev.y + uy * along;
                         const lp = this.worldToCanvas(lx, ly);
                         const ledSize = Math.max(1.5, this.worldScale(0.003));
                         ctx.beginPath();
@@ -498,9 +583,8 @@ class SpiralVisualizer {
                         ctx.strokeStyle = '#cc9900';
                         ctx.lineWidth = 0.5;
                         ctx.stroke();
-                        d += ledPitchM;
+                        nextLedDist += ledPitchM;
                     }
-                    accumDist = stepLen - (d - ledPitchM);
                 }
             }
         }
