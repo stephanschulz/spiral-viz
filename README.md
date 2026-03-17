@@ -1,9 +1,9 @@
 # Spiral Visualizer
-Note: This project was developed with AI assistance.
+**Note: This project was developed with AI assistance.**
 
 Interactive web app for planning and visualizing a spiral LED tube layout on a wall. It lets you tune geometry, segmentation, LED density, pixel grouping, and power assumptions, then instantly see a scaled preview and key totals.
 
-## Live Demo
+## 🌐 Live Demo
 [https://stephanschulz.ca/spiral-viz/](https://stephanschulz.ca/spiral-viz/)
 
 ## What This App Does

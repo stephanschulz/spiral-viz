@@ -68,17 +68,17 @@ body {
     padding-bottom: 4px;
 }
 
-.repo-link {
-    display: inline-block;
-    margin-bottom: 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #007bff;
-    text-decoration: none;
+.repo-link-footer {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e0e0e0;
+    text-align: center;
 }
 
-.repo-link:hover {
-    text-decoration: underline;
+.repo-link-footer img {
+    max-width: 100%;
+    height: auto;
+    border: 0;
 }
 
 .control-panel h3 {
