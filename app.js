@@ -509,6 +509,72 @@ class SpiralVisualizer {
         };
     }
 
+    pointInPolygon(x, y, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+            const xi = polygon[i].x;
+            const yi = polygon[i].y;
+            const xj = polygon[j].x;
+            const yj = polygon[j].y;
+            const intersects = ((yi > y) !== (yj > y)) &&
+                (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi);
+            if (intersects) inside = !inside;
+        }
+        return inside;
+    }
+
+    averageImageColorInPolygon(polygon, map) {
+        if (!this.backgroundImageData || !map || !polygon || polygon.length < 3) return null;
+        const data = this.backgroundImageData.data;
+        const imgW = this.backgroundImageData.width;
+        const imgH = this.backgroundImageData.height;
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of polygon) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+        minX = Math.floor(minX);
+        minY = Math.floor(minY);
+        maxX = Math.ceil(maxX);
+        maxY = Math.ceil(maxY);
+
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let count = 0;
+
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                if (!this.pointInPolygon(x + 0.5, y + 0.5, polygon)) continue;
+
+                const tx = (x - map.tlX) / map.wallW;
+                const ty = (y - map.tlY) / map.wallH;
+                if (tx < 0 || tx > 1 || ty < 0 || ty > 1) continue;
+
+                const ix = Math.min(imgW - 1, Math.max(0, Math.floor(tx * imgW)));
+                const iy = Math.min(imgH - 1, Math.max(0, Math.floor(ty * imgH)));
+                const idx = (iy * imgW + ix) * 4;
+                const a = data[idx + 3] / 255;
+                if (a <= 0) continue;
+
+                rSum += data[idx] * a;
+                gSum += data[idx + 1] * a;
+                bSum += data[idx + 2] * a;
+                count += a;
+            }
+        }
+
+        if (count === 0) return null;
+        return {
+            r: Math.round(rSum / count),
+            g: Math.round(gSum / count),
+            b: Math.round(bSum / count)
+        };
+    }
+
     drawGrid() {
         if (!this.showGrid) return;
         const ctx = this.ctx;
@@ -562,6 +628,20 @@ class SpiralVisualizer {
         const ctx = this.ctx;
         const tubeRadiusM = (this.tubeDiameter / 1000) / 2;
         const segGapM = this.segmentGap / 1000;
+        const drawImagePixels = this.showImage && this.backgroundImage && this.backgroundImageData;
+        let imageMap = null;
+        if (drawImagePixels) {
+            const hw = this.wallWidth / 2;
+            const hh = this.wallHeight / 2;
+            const tl = this.worldToCanvas(-hw, -hh);
+            const br = this.worldToCanvas(hw, hh);
+            imageMap = {
+                tlX: tl.x,
+                tlY: tl.y,
+                wallW: br.x - tl.x,
+                wallH: br.y - tl.y
+            };
+        }
 
         ctx.save();
 
@@ -673,45 +753,47 @@ class SpiralVisualizer {
                 if (rangeStart <= i1) pixelRanges.push({ startIdx: rangeStart, endIdx: i1 });
 
                 pixelRanges.forEach(({ startIdx: pa, endIdx: pb }, idx) => {
-                    ctx.beginPath();
-                    let cp = this.worldToCanvas(outerPts[pa].x, outerPts[pa].y);
-                    ctx.moveTo(cp.x, cp.y);
-                    for (let i = pa + 1; i <= pb; i++) {
-                        cp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
-                        ctx.lineTo(cp.x, cp.y);
+                    const polygon = [];
+                    for (let i = pa; i <= pb; i++) {
+                        polygon.push(this.worldToCanvas(outerPts[i].x, outerPts[i].y));
                     }
                     for (let i = pb; i >= pa; i--) {
-                        cp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                        polygon.push(this.worldToCanvas(innerPts[i].x, innerPts[i].y));
+                    }
+
+                    ctx.beginPath();
+                    let cp = polygon[0];
+                    ctx.moveTo(cp.x, cp.y);
+                    for (let i = 1; i < polygon.length; i++) {
+                        cp = polygon[i];
                         ctx.lineTo(cp.x, cp.y);
                     }
                     ctx.closePath();
-                    ctx.fillStyle = idx % 2 === 0 ? 'rgba(255, 220, 120, 0.5)' : 'rgba(255, 180, 80, 0.45)';
+
+                    if (drawImagePixels && imageMap) {
+                        const avg = this.averageImageColorInPolygon(polygon, imageMap);
+                        if (avg) {
+                            ctx.fillStyle = `rgb(${avg.r}, ${avg.g}, ${avg.b})`;
+                        } else {
+                            ctx.fillStyle = idx % 2 === 0 ? 'rgba(255, 220, 120, 0.5)' : 'rgba(255, 180, 80, 0.45)';
+                        }
+                    } else {
+                        ctx.fillStyle = idx % 2 === 0 ? 'rgba(255, 220, 120, 0.5)' : 'rgba(255, 180, 80, 0.45)';
+                    }
                     ctx.fill();
                 });
             }
         }
 
         // Draw LED positions (only within segments)
-        // Image pixels are controlled by showImage; circle overlay by showLeds.
-        const drawImagePixels = this.showImage && this.backgroundImage;
-        const drawLedCircles = this.showLeds;
-        if (drawImagePixels || drawLedCircles) {
+        // If pixel-groups + image are enabled, groups alone represent output.
+        const suppressLedRendering = this.showPixelGroups && drawImagePixels;
+        const drawLedCircles = this.showLeds && !suppressLedRendering;
+        const drawLedImageColors = drawImagePixels && !suppressLedRendering;
+        if (drawLedImageColors || drawLedCircles) {
             const ledPitchM = this.ledPitch / 1000;
             const halfPitchM = ledPitchM / 2;
             const ledSize = Math.max(1.5, this.worldScale(0.003));
-            let imageMap = null;
-            if (drawImagePixels) {
-                const hw = this.wallWidth / 2;
-                const hh = this.wallHeight / 2;
-                const tl = this.worldToCanvas(-hw, -hh);
-                const br = this.worldToCanvas(hw, hh);
-                imageMap = {
-                    tlX: tl.x,
-                    tlY: tl.y,
-                    wallW: br.x - tl.x,
-                    wallH: br.y - tl.y
-                };
-            }
 
             for (let s = 0; s < this.segments.length; s++) {
                 const { startIdx: i0, endIdx: i1 } = this.segments[s];
@@ -738,7 +820,7 @@ class SpiralVisualizer {
                         const ly = prev.y + uy * along;
                         const lp = this.worldToCanvas(lx, ly);
 
-                        if (drawImagePixels) {
+                        if (drawLedImageColors) {
                             const avg = this.averageImageColorInLedCircle(lp.x, lp.y, ledSize, imageMap);
                             if (avg) {
                                 ctx.beginPath();
@@ -751,7 +833,7 @@ class SpiralVisualizer {
                         if (drawLedCircles) {
                             ctx.beginPath();
                             ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
-                            if (!drawImagePixels) {
+                            if (!drawLedImageColors) {
                                 ctx.fillStyle = '#ffcc00';
                                 ctx.fill();
                                 ctx.strokeStyle = '#cc9900';
