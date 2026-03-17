@@ -3,4 +3,4 @@
 - list total pixel count, total segment use
 - set led tube diameter / thickness
 - based on a gui setable watt per meter value display total watt usage based on total led tube meters used
-- 
+- set background grid size via gui with default 1m

@@ -8,17 +8,17 @@ class SpiralVisualizer {
         this.wallWidth = 3.0;
         this.wallHeight = 3.0;
 
-        // Spiral parameters
-        this.spiralSpacing = 8.0;   // cm between spiral rounds
-        this.segmentLength = 5.0;   // cm per segment
+        // Spiral parameters (GUI units)
+        this.spiralSpacing = 80;    // mm between spiral rounds
+        this.segmentLength = 200;   // cm per segment
         this.tubeDiameter = 22;     // mm
 
-        // LED parameters
-        this.ledPitch = 1.67;       // cm between LEDs
+        // LED parameters (GUI units)
+        this.ledPitch = 10.4;       // mm between LEDs
         this.showLeds = true;
 
         // Display options
-        this.showSegments = false;
+        this.showSegments = true;
         this.showGrid = true;
         this.showWallBorder = true;
 
@@ -31,7 +31,8 @@ class SpiralVisualizer {
         this.panStartY = 0;
 
         // Computed spiral data
-        this.spiralPoints = [];
+        this.curvePoints = [];       // dense points along the spiral curve (in meters)
+        this.segmentIndices = [];    // indices into curvePoints where segments begin/end
         this.spiralTotalLength = 0;
         this.spiralSegmentCount = 0;
         this.spiralLedCount = 0;
@@ -50,16 +51,21 @@ class SpiralVisualizer {
 
     setupEventListeners() {
         // Sliders
-        const sliderIds = [
-            'wallWidth', 'wallHeight', 'spiralSpacing',
-            'segmentLength', 'tubeDiameter', 'ledPitch'
-        ];
-        sliderIds.forEach(id => {
+        const sliderConfigs = {
+            wallWidth:     { decimals: 1 },
+            wallHeight:    { decimals: 1 },
+            spiralSpacing: { decimals: 0 },
+            segmentLength: { decimals: 0 },
+            tubeDiameter:  { decimals: 0 },
+            ledPitch:      { decimals: 1 },
+        };
+        Object.keys(sliderConfigs).forEach(id => {
             const el = document.getElementById(id);
+            const cfg = sliderConfigs[id];
             el.addEventListener('input', () => {
                 this[id] = parseFloat(el.value);
                 document.getElementById(id + 'Val').textContent =
-                    id === 'tubeDiameter' ? el.value : parseFloat(el.value).toFixed(id === 'ledPitch' ? 2 : 1);
+                    parseFloat(el.value).toFixed(cfg.decimals);
                 this.computeSpiral();
                 this.draw();
             });
@@ -107,7 +113,6 @@ class SpiralVisualizer {
             const rect = this.canvas.getBoundingClientRect();
             const mx = e.clientX - rect.left;
             const my = e.clientY - rect.top;
-            // Zoom toward cursor
             this.offsetX = mx - (mx - this.offsetX) * zoomFactor;
             this.offsetY = my - (my - this.offsetY) * zoomFactor;
             this.scale *= zoomFactor;
@@ -122,11 +127,10 @@ class SpiralVisualizer {
         this.draw();
     }
 
-    // Convert world coordinates (meters) to canvas pixels
     worldToCanvas(wx, wy) {
         const wallMaxDim = Math.max(this.wallWidth, this.wallHeight);
         const canvasMinDim = Math.min(this.canvas.width, this.canvas.height);
-        const ppm = (canvasMinDim * 0.85) / wallMaxDim; // pixels per meter
+        const ppm = (canvasMinDim * 0.85) / wallMaxDim;
         const cx = this.canvas.width / 2 + this.offsetX;
         const cy = this.canvas.height / 2 + this.offsetY;
         return {
@@ -135,7 +139,6 @@ class SpiralVisualizer {
         };
     }
 
-    // Scale a world distance (meters) to canvas pixels
     worldScale(meters) {
         const wallMaxDim = Math.max(this.wallWidth, this.wallHeight);
         const canvasMinDim = Math.min(this.canvas.width, this.canvas.height);
@@ -144,61 +147,74 @@ class SpiralVisualizer {
     }
 
     computeSpiral() {
-        // Archimedean spiral: r = a + b*theta
-        // b = spacing / (2*PI)  where spacing is distance between successive turns
-        const spacingM = this.spiralSpacing / 100; // convert cm to meters
-        const segLenM = this.segmentLength / 100;  // convert cm to meters
-        const b = spacingM / (2 * Math.PI);
+        // Archimedean spiral: r = b * theta
+        // spacing = gap between tube edges, so center-to-center = gap + tubeDiameter
+        const gapM = this.spiralSpacing / 1000;          // mm -> meters
+        const tubeDiamM = this.tubeDiameter / 1000;      // mm -> meters
+        const centerToCenter = gapM + tubeDiamM;         // center-to-center between turns
+        const segLenM = this.segmentLength / 100;         // cm -> meters
+        const b = centerToCenter / (2 * Math.PI);
 
-        // Maximum radius: half of the smaller wall dimension
         const maxRadius = Math.min(this.wallWidth, this.wallHeight) / 2 * 0.95;
 
-        // Build spiral as a series of fixed-length segments
-        this.spiralPoints = [{ x: 0, y: 0, theta: 0, r: 0 }];
+        // Generate dense curve points for smooth rendering
+        // Use a small angular step that produces ~2mm arc steps
+        this.curvePoints = [{ x: 0, y: 0, theta: 0, r: 0 }];
+        this.segmentIndices = [0]; // first segment starts at index 0
+
         let theta = 0;
         let totalLength = 0;
-
-        // Step along the spiral in small angular increments, accumulate arc length,
-        // and place a segment point every segLenM meters.
-        let accumLen = 0;
-        const dTheta = 0.01; // small angular step for arc-length integration
+        let segAccum = 0;  // accumulated length toward next segment boundary
+        const targetStep = 0.002; // ~2mm arc step for smoothness
 
         while (true) {
             const r = b * theta;
+            // Adaptive angular step: ds ≈ r * dTheta for large r
+            // For small r, use a fixed small angle
+            let dTheta;
+            if (r < 0.001) {
+                dTheta = 0.05;
+            } else {
+                dTheta = targetStep / r;
+                dTheta = Math.min(dTheta, 0.05);
+                dTheta = Math.max(dTheta, 0.001);
+            }
+
             const nextTheta = theta + dTheta;
             const rNext = b * nextTheta;
-            // Approximate arc length for this small step
-            // ds = sqrt( (dr)^2 + (r*dTheta)^2 )
+
+            // Arc length for this step
             const dr = rNext - r;
             const ds = Math.sqrt(dr * dr + (r * dTheta) * (r * dTheta));
-            accumLen += ds;
 
-            if (accumLen >= segLenM) {
-                const x = rNext * Math.cos(nextTheta);
-                const y = rNext * Math.sin(nextTheta);
-                this.spiralPoints.push({ x, y, theta: nextTheta, r: rNext });
-                totalLength += accumLen;
-                accumLen = 0;
+            totalLength += ds;
+            segAccum += ds;
+
+            const x = rNext * Math.cos(nextTheta);
+            const y = rNext * Math.sin(nextTheta);
+            this.curvePoints.push({ x, y, theta: nextTheta, r: rNext });
+
+            // Check if we crossed a segment boundary
+            if (segAccum >= segLenM) {
+                this.segmentIndices.push(this.curvePoints.length - 1);
+                segAccum = 0;
             }
 
             theta = nextTheta;
 
-            if (rNext > maxRadius) {
-                // Add final partial segment if meaningful
-                if (accumLen > segLenM * 0.1) {
-                    const x = rNext * Math.cos(theta);
-                    const y = rNext * Math.sin(theta);
-                    this.spiralPoints.push({ x, y, theta, r: rNext });
-                    totalLength += accumLen;
-                }
-                break;
-            }
+            if (rNext > maxRadius) break;
+        }
+
+        // Add final index as last segment boundary
+        const lastIdx = this.curvePoints.length - 1;
+        if (this.segmentIndices[this.segmentIndices.length - 1] !== lastIdx) {
+            this.segmentIndices.push(lastIdx);
         }
 
         this.spiralTotalLength = totalLength;
-        this.spiralSegmentCount = Math.max(0, this.spiralPoints.length - 1);
+        this.spiralSegmentCount = Math.max(0, this.segmentIndices.length - 1);
         this.spiralTurns = theta / (2 * Math.PI);
-        this.spiralLedCount = Math.floor(totalLength / (this.ledPitch / 100));
+        this.spiralLedCount = Math.floor(totalLength / (this.ledPitch / 1000)); // mm -> meters
 
         // Update info
         document.getElementById('spiralLength').textContent =
@@ -209,20 +225,37 @@ class SpiralVisualizer {
             `Total LEDs: ${this.spiralLedCount}`;
         document.getElementById('turnsCount').textContent =
             `Turns: ${this.spiralTurns.toFixed(1)}`;
+
+        const ledsPerSeg = (this.segmentLength * 10) / this.ledPitch; // both effectively in mm
         document.getElementById('infoBox').textContent =
             `Tube diameter: ${this.tubeDiameter} mm\n` +
-            `Spiral spacing: ${this.spiralSpacing} cm\n` +
+            `Spiral spacing: ${this.spiralSpacing} mm\n` +
             `Segment length: ${this.segmentLength} cm\n` +
-            `LED pitch: ${this.ledPitch} cm\n` +
-            `LEDs per segment: ${(this.segmentLength / this.ledPitch).toFixed(1)}\n` +
+            `LED pitch: ${this.ledPitch} mm\n` +
+            `LEDs per segment: ${ledsPerSeg.toFixed(1)}\n` +
             `Wall: ${this.wallWidth} x ${this.wallHeight} m`;
+    }
+
+    // Compute normal (perpendicular to tangent) at curve point index i
+    normalAt(i) {
+        const pts = this.curvePoints;
+        let dx, dy;
+        if (i < pts.length - 1) {
+            dx = pts[i + 1].x - pts[i].x;
+            dy = pts[i + 1].y - pts[i].y;
+        } else {
+            dx = pts[i].x - pts[i - 1].x;
+            dy = pts[i].y - pts[i - 1].y;
+        }
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len === 0) return { nx: 0, ny: 1 };
+        return { nx: -dy / len, ny: dx / len };
     }
 
     draw() {
         const ctx = this.ctx;
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Background
         ctx.fillStyle = '#f5f5f5';
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -238,18 +271,15 @@ class SpiralVisualizer {
         ctx.strokeStyle = '#e0e0e0';
         ctx.lineWidth = 1;
 
-        // Draw grid lines every 0.5m across the wall area (and a bit beyond)
-        const step = 0.5; // meters
+        const step = 0.5;
         const extent = Math.max(this.wallWidth, this.wallHeight) / 2 + 0.5;
         for (let v = -extent; v <= extent; v += step) {
-            // Vertical lines
             const p1 = this.worldToCanvas(v, -extent);
             const p2 = this.worldToCanvas(v, extent);
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             ctx.stroke();
-            // Horizontal lines
             const p3 = this.worldToCanvas(-extent, v);
             const p4 = this.worldToCanvas(extent, v);
             ctx.beginPath();
@@ -276,7 +306,6 @@ class SpiralVisualizer {
         ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
         ctx.setLineDash([]);
 
-        // Label
         ctx.fillStyle = '#555';
         ctx.font = '11px -apple-system, sans-serif';
         ctx.fillText(`${this.wallWidth}m x ${this.wallHeight}m`, tl.x + 4, tl.y - 6);
@@ -284,36 +313,19 @@ class SpiralVisualizer {
     }
 
     drawSpiral() {
-        if (this.spiralPoints.length < 2) return;
+        if (this.curvePoints.length < 2) return;
         const ctx = this.ctx;
-        const tubeRadiusM = (this.tubeDiameter / 1000) / 2; // tube radius in meters
+        const tubeRadiusM = (this.tubeDiameter / 1000) / 2;
 
-        // Draw the two edges of the tube (outer and inner offset from centerline)
         ctx.save();
 
-        // Draw tube body as a filled path between outer and inner edges
+        // Build outer and inner edge points
         const outerPts = [];
         const innerPts = [];
 
-        for (let i = 0; i < this.spiralPoints.length; i++) {
-            const p = this.spiralPoints[i];
-            // Normal direction: perpendicular to the tangent
-            let nx, ny;
-            if (i < this.spiralPoints.length - 1) {
-                const pNext = this.spiralPoints[i + 1];
-                const dx = pNext.x - p.x;
-                const dy = pNext.y - p.y;
-                const len = Math.sqrt(dx * dx + dy * dy);
-                nx = -dy / len;
-                ny = dx / len;
-            } else {
-                const pPrev = this.spiralPoints[i - 1];
-                const dx = p.x - pPrev.x;
-                const dy = p.y - pPrev.y;
-                const len = Math.sqrt(dx * dx + dy * dy);
-                nx = -dy / len;
-                ny = dx / len;
-            }
+        for (let i = 0; i < this.curvePoints.length; i++) {
+            const p = this.curvePoints[i];
+            const { nx, ny } = this.normalAt(i);
             outerPts.push({
                 x: p.x + nx * tubeRadiusM,
                 y: p.y + ny * tubeRadiusM
@@ -340,7 +352,7 @@ class SpiralVisualizer {
         ctx.fillStyle = 'rgba(200, 220, 255, 0.3)';
         ctx.fill();
 
-        // Draw outer edge
+        // Outer edge line
         ctx.beginPath();
         cp = this.worldToCanvas(outerPts[0].x, outerPts[0].y);
         ctx.moveTo(cp.x, cp.y);
@@ -352,7 +364,7 @@ class SpiralVisualizer {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Draw inner edge
+        // Inner edge line
         ctx.beginPath();
         cp = this.worldToCanvas(innerPts[0].x, innerPts[0].y);
         ctx.moveTo(cp.x, cp.y);
@@ -364,42 +376,42 @@ class SpiralVisualizer {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Draw segment joints
+        // Draw segment boundary lines (perpendicular across tube at each segment joint)
         if (this.showSegments) {
-            for (let i = 0; i < this.spiralPoints.length; i++) {
-                const po = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
-                const pi2 = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+            ctx.strokeStyle = 'rgba(255, 100, 50, 0.7)';
+            ctx.lineWidth = 1.5;
+            for (const idx of this.segmentIndices) {
+                const po = this.worldToCanvas(outerPts[idx].x, outerPts[idx].y);
+                const pi = this.worldToCanvas(innerPts[idx].x, innerPts[idx].y);
                 ctx.beginPath();
                 ctx.moveTo(po.x, po.y);
-                ctx.lineTo(pi2.x, pi2.y);
-                ctx.strokeStyle = 'rgba(255, 100, 50, 0.5)';
-                ctx.lineWidth = 1;
+                ctx.lineTo(pi.x, pi.y);
                 ctx.stroke();
             }
         }
 
-        // Draw LEDs
+        // Draw LEDs along the curve
         if (this.showLeds) {
-            const ledPitchM = this.ledPitch / 100;
+            const ledPitchM = this.ledPitch / 1000; // mm -> meters
             let accumDist = 0;
 
-            for (let i = 1; i < this.spiralPoints.length; i++) {
-                const prev = this.spiralPoints[i - 1];
-                const curr = this.spiralPoints[i];
+            for (let i = 1; i < this.curvePoints.length; i++) {
+                const prev = this.curvePoints[i - 1];
+                const curr = this.curvePoints[i];
                 const dx = curr.x - prev.x;
                 const dy = curr.y - prev.y;
-                const segLen = Math.sqrt(dx * dx + dy * dy);
-                if (segLen === 0) continue;
+                const stepLen = Math.sqrt(dx * dx + dy * dy);
+                if (stepLen === 0) continue;
 
-                const ux = dx / segLen;
-                const uy = dy / segLen;
+                const ux = dx / stepLen;
+                const uy = dy / stepLen;
 
                 let d = ledPitchM - accumDist;
-                while (d <= segLen) {
+                while (d <= stepLen) {
                     const lx = prev.x + ux * d;
                     const ly = prev.y + uy * d;
                     const lp = this.worldToCanvas(lx, ly);
-                    const ledSize = Math.max(2, this.worldScale(0.005));
+                    const ledSize = Math.max(1.5, this.worldScale(0.003));
                     ctx.beginPath();
                     ctx.arc(lp.x, lp.y, ledSize, 0, Math.PI * 2);
                     ctx.fillStyle = '#ffcc00';
@@ -409,11 +421,11 @@ class SpiralVisualizer {
                     ctx.stroke();
                     d += ledPitchM;
                 }
-                accumDist = segLen - (d - ledPitchM);
+                accumDist = stepLen - (d - ledPitchM);
             }
         }
 
-        // Draw center point
+        // Center point
         const center = this.worldToCanvas(0, 0);
         ctx.beginPath();
         ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
@@ -432,32 +444,39 @@ class SpiralVisualizer {
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
-        // Find closest spiral point
+        // Sample every Nth curve point for hit-testing (curve is dense)
+        const step = Math.max(1, Math.floor(this.curvePoints.length / 500));
         let minDist = Infinity;
         let closestIdx = -1;
-        for (let i = 0; i < this.spiralPoints.length; i++) {
-            const cp = this.worldToCanvas(this.spiralPoints[i].x, this.spiralPoints[i].y);
-            const d = Math.sqrt((cp.x - mx) ** 2 + (cp.y - my) ** 2);
+        for (let i = 0; i < this.curvePoints.length; i += step) {
+            const cp = this.worldToCanvas(this.curvePoints[i].x, this.curvePoints[i].y);
+            const d = (cp.x - mx) ** 2 + (cp.y - my) ** 2;
             if (d < minDist) {
                 minDist = d;
                 closestIdx = i;
             }
         }
+        minDist = Math.sqrt(minDist);
 
         if (minDist < 30 && closestIdx >= 0) {
-            const p = this.spiralPoints[closestIdx];
-            // Compute cumulative length up to this point
-            let cumLen = 0;
-            for (let i = 1; i <= closestIdx; i++) {
-                const prev = this.spiralPoints[i - 1];
-                const curr = this.spiralPoints[i];
-                cumLen += Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+            const p = this.curvePoints[closestIdx];
+            // Figure out which segment this point belongs to
+            let segNum = 0;
+            for (let s = 0; s < this.segmentIndices.length - 1; s++) {
+                if (closestIdx >= this.segmentIndices[s] && closestIdx < this.segmentIndices[s + 1]) {
+                    segNum = s + 1;
+                    break;
+                }
             }
+            // Cumulative length (approximate from index proportion)
+            const frac = closestIdx / (this.curvePoints.length - 1);
+            const cumLen = frac * this.spiralTotalLength;
+
             this.tooltip.style.display = 'block';
             this.tooltip.style.left = (e.clientX + 12) + 'px';
             this.tooltip.style.top = (e.clientY + 12) + 'px';
             this.tooltip.textContent =
-                `Segment: ${closestIdx} / ${this.spiralSegmentCount}\n` +
+                `Segment: ${segNum} / ${this.spiralSegmentCount}\n` +
                 `Radius: ${(p.r * 100).toFixed(1)} cm\n` +
                 `Length to here: ${cumLen.toFixed(2)} m\n` +
                 `Angle: ${(p.theta * 180 / Math.PI).toFixed(1)}°`;
@@ -467,5 +486,4 @@ class SpiralVisualizer {
     }
 }
 
-// Initialize
 const app = new SpiralVisualizer();
