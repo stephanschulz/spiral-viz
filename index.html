@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spiral LED Tube Visualizer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="canvas-container">
+            <canvas id="spiralCanvas"></canvas>
+            <div id="tooltip" class="tooltip"></div>
+        </div>
+
+        <div class="control-panel">
+            <h2>Spiral Visualizer</h2>
+
+            <div class="control-section">
+                <h3>Wall</h3>
+                <label>Wall Width (m): <span id="wallWidthVal">3.00</span></label>
+                <input type="range" id="wallWidth" min="1" max="6" step="0.1" value="3">
+                <label>Wall Height (m): <span id="wallHeightVal">3.00</span></label>
+                <input type="range" id="wallHeight" min="1" max="6" step="0.1" value="3">
+            </div>
+
+            <div class="control-section">
+                <h3>Spiral Geometry</h3>
+                <label>Spiral Spacing (cm): <span id="spiralSpacingVal">8.0</span></label>
+                <input type="range" id="spiralSpacing" min="3" max="30" step="0.5" value="8">
+                <label>Segment Length (cm): <span id="segmentLengthVal">5.0</span></label>
+                <input type="range" id="segmentLength" min="1" max="30" step="0.5" value="5">
+                <label>Tube Diameter (mm): <span id="tubeDiameterVal">22</span></label>
+                <input type="range" id="tubeDiameter" min="5" max="50" step="1" value="22">
+            </div>
+
+            <div class="control-section">
+                <h3>LEDs</h3>
+                <label>LED Pitch (cm): <span id="ledPitchVal">1.67</span></label>
+                <input type="range" id="ledPitch" min="0.5" max="10" step="0.01" value="1.67">
+                <label><input type="checkbox" id="showLeds" checked> Show LEDs</label>
+            </div>
+
+            <div class="control-section">
+                <h3>Display Options</h3>
+                <label><input type="checkbox" id="showSegments"> Show Segment Joints</label>
+                <label><input type="checkbox" id="showGrid" checked> Show Grid</label>
+                <label><input type="checkbox" id="showWallBorder" checked> Show Wall Border</label>
+            </div>
+
+            <div class="control-section">
+                <h3>View</h3>
+                <button class="btn" id="resetViewBtn">Reset View</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Info</h3>
+                <div id="spiralLength" class="info-stat highlight">Spiral Length: --</div>
+                <div id="segmentCount" class="info-stat">Segments: --</div>
+                <div id="ledCount" class="info-stat">Total LEDs: --</div>
+                <div id="turnsCount" class="info-stat">Turns: --</div>
+                <div class="info-box" id="infoBox">Adjust sliders to configure the spiral.</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
