@@ -165,6 +165,7 @@
             <h3>Display</h3>
             <label class="cb"><input type="checkbox" id="showGrid" checked> Wall grid</label>
             <label class="cb"><input type="checkbox" id="showSegColors" checked> Color segments</label>
+            <label class="cb"><input type="checkbox" id="showNormals"> Aim normals → focus</label>
         </div>
 
         <div class="section">
@@ -259,6 +260,7 @@
             this.normalOffsetDeg = 0;    // ± tilt of the aim away from the surface normal
             this.showGrid = true;
             this.showSegColors = true;
+            this.showNormals = false;    // draw aim rays + focus marker
 
             // Support ribs
             this.showRibs = true;
@@ -271,6 +273,7 @@
             this.spiralMeta = null;
             this.tubeGroup = new THREE.Group();
             this.ribGroup = new THREE.Group();
+            this.normalGroup = new THREE.Group();
 
             this.initScene();
             this.initRibCanvas();
@@ -313,6 +316,7 @@
             this.scene.add(new THREE.AxesHelper(0.3));
             this.scene.add(this.tubeGroup);
             this.scene.add(this.ribGroup);
+            this.scene.add(this.normalGroup);
 
             this.controls = new OrbitControls(this.camera, this.renderer.domElement);
             this.controls.enableDamping = true;
@@ -739,6 +743,19 @@
             for (const p of data.outline) grow(p[0], p[1]);
             for (const t of data.teeth) for (const c of profilePoly(t)) grow(c[0], c[1]);
 
+            // dimension-line placement (in world units), then grow the bbox to fit them
+            const profileZMax = zMax;
+            let ribZMax = 0;
+            for (const p of data.outline) ribZMax = Math.max(ribZMax, p[1]);
+            const ribLen = data.rEnd - data.rStart;
+            const gz = ribZMax * 0.2 + 0.006, gr = ribLen * 0.07;
+            const zLenDim = -gz;                       // overall length, below the wall
+            const rHgtDim = data.rStart - gr;          // overall height, to the left
+            const zPitchDim = profileZMax + gz * 0.7;  // tooth pitch, above the tubes
+            grow(data.rStart, zLenDim); grow(data.rEnd, zLenDim);
+            grow(rHgtDim, 0); grow(rHgtDim, ribZMax);
+            if (data.teeth.length >= 2) { grow(data.teeth[0].P[0], zPitchDim); grow(data.teeth[1].P[0], zPitchDim); }
+
             const mL = 14, mR = 14, mTop = 30, mBot = 14;
             const spanR = Math.max(rMax - rMin, 1e-4), spanZ = Math.max(zMax - zMin, 1e-4);
             const scale = Math.min((W - mL - mR) / spanR, (H - mTop - mBot) / spanZ);
@@ -796,6 +813,55 @@
                 }
                 ctx.stroke();
             }
+
+            // ---- dimensions (zoom/pan with the drawing) ----
+            const arrow = (x1, y1, x2, y2) => {
+                ctx.strokeStyle = '#6db1ff'; ctx.fillStyle = '#6db1ff'; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                const ah = 3, a = Math.atan2(y2 - y1, x2 - x1);
+                for (const [qx, qy, qa] of [[x1, y1, a], [x2, y2, a + Math.PI]]) {
+                    ctx.beginPath();
+                    ctx.moveTo(qx, qy);
+                    ctx.lineTo(qx + ah * Math.cos(qa - 0.4), qy + ah * Math.sin(qa - 0.4));
+                    ctx.lineTo(qx + ah * Math.cos(qa + 0.4), qy + ah * Math.sin(qa + 0.4));
+                    ctx.closePath(); ctx.fill();
+                }
+            };
+            const ext = (x1, y1, x2, y2) => {
+                ctx.strokeStyle = '#3a4250'; ctx.lineWidth = 0.5;
+                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            };
+            ctx.font = '9px -apple-system, sans-serif';
+            ctx.fillStyle = '#9fc6ff';
+            ctx.textAlign = 'center';
+
+            // overall length (bottom)
+            const yL = cy(zLenDim);
+            ext(cx(data.rStart), cy(0), cx(data.rStart), yL);
+            ext(cx(data.rEnd), cy(0), cx(data.rEnd), yL);
+            arrow(cx(data.rStart), yL, cx(data.rEnd), yL);
+            ctx.fillText(mm(ribLen).toFixed(0) + ' mm', (cx(data.rStart) + cx(data.rEnd)) / 2, yL + 11);
+
+            // overall height (left)
+            const xH = cx(rHgtDim);
+            ext(cx(data.rStart), cy(0), xH, cy(0));
+            ext(cx(data.rStart), cy(ribZMax), xH, cy(ribZMax));
+            arrow(xH, cy(0), xH, cy(ribZMax));
+            ctx.save();
+            ctx.translate(xH - 4, (cy(0) + cy(ribZMax)) / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText(mm(ribZMax).toFixed(0) + ' mm', 0, 0);
+            ctx.restore();
+
+            // tooth pitch (top, between the first two teeth)
+            if (data.teeth.length >= 2) {
+                const yP = cy(zPitchDim);
+                const x0 = cx(data.teeth[0].P[0]), x1 = cx(data.teeth[1].P[0]);
+                ext(x0, cy(profileZMax), x0, yP);
+                ext(x1, cy(profileZMax), x1, yP);
+                arrow(x0, yP, x1, yP);
+                ctx.fillText('pitch ' + mm(data.pitchM).toFixed(1) + ' mm', (x0 + x1) / 2, yP - 3);
+            }
         }
 
         rebuild() {
@@ -805,6 +871,7 @@
                 m.geometry?.dispose();
             }
             const { points, segments } = this.computeCenterline();
+            this._centerline = points;
             const profile = PROFILES[this.profileKey];
 
             this._mats = this.makeMaterials();
@@ -817,10 +884,74 @@
             });
 
             this.buildRibs();
+            this.buildNormals();
 
             document.getElementById('lenInfo').textContent = this.totalLength.toFixed(2) + ' m';
             document.getElementById('turnInfo').textContent = this.turns.toFixed(1);
             document.getElementById('segInfo').textContent = segments.length;
+        }
+
+        // Draw a sample of tube aim-normals as rays, and mark the point they best
+        // converge on (the focal centre). With no curvature/offset the rays are
+        // parallel (focus at infinity) so no marker is shown.
+        buildNormals() {
+            while (this.normalGroup.children.length) {
+                const c = this.normalGroup.children.pop();
+                c.geometry?.dispose();
+            }
+            if (!this.showNormals || !this._centerline || this._centerline.length < 2) return;
+            const pts = this._centerline;
+            const COUNT = 60;
+            const samples = [];
+            for (let i = 0; i < COUNT; i++) {
+                const p = pts[Math.floor(i / (COUNT - 1) * (pts.length - 1))];
+                const P = new THREE.Vector3(p.x, p.y, this.surfaceZ(p.r));
+                const N = this.dishNormal(p.x, p.y, p.r);   // unit aim direction
+                samples.push({ P, N });
+            }
+
+            // Least-squares point closest to all aim lines:  A x = b,
+            // A = Σ(I − n nᵀ),  b = Σ(I − n nᵀ) p
+            const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+            for (const { P, N } of samples) {
+                const n = [N.x, N.y, N.z], p = [P.x, P.y, P.z];
+                for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+                    const m = (r === c ? 1 : 0) - n[r] * n[c];
+                    A[r][c] += m; b[r] += m * p[c];
+                }
+            }
+            const det =
+                A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) -
+                A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) +
+                A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+            let F = null;
+            if (Math.abs(det) > 1e-6) {
+                const col = (M, j, v) => M.map((row, r) => row.map((x, c) => c === j ? v[r] : x));
+                const d3 = (M) =>
+                    M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+                    M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+                    M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+                F = new THREE.Vector3(d3(col(A, 0, b)) / det, d3(col(A, 1, b)) / det, d3(col(A, 2, b)) / det);
+            }
+
+            const positions = [];
+            for (const { P, N } of samples) {
+                const L = F ? Math.max(0.02, N.dot(new THREE.Vector3().subVectors(F, P))) : this.rMax * 1.5;
+                const E = new THREE.Vector3().copy(P).addScaledVector(N, L);
+                positions.push(P.x, P.y, P.z, E.x, E.y, E.z);
+            }
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            this.normalGroup.add(new THREE.LineSegments(geom,
+                new THREE.LineBasicMaterial({ color: 0x37c0ff, transparent: true, opacity: 0.5 })));
+
+            if (F) {
+                const sph = new THREE.Mesh(
+                    new THREE.SphereGeometry(Math.max(0.01, this.rMax * 0.03), 16, 12),
+                    new THREE.MeshBasicMaterial({ color: 0xff4477 }));
+                sph.position.copy(F);
+                this.normalGroup.add(sph);
+            }
         }
 
         // ---------- Persistence ----------
@@ -839,6 +970,7 @@
                 reverseWinding: this.reverseWinding,
                 showGrid: this.showGrid,
                 showSegColors: this.showSegColors,
+                showNormals: this.showNormals,
                 showRibs: this.showRibs,
                 ribCount: this.ribCount,
                 ribThickness: this.ribThickness,
@@ -878,6 +1010,10 @@
             if (d.showSegColors != null) {
                 this.showSegColors = d.showSegColors;
                 const cb = document.getElementById('showSegColors'); if (cb) cb.checked = d.showSegColors;
+            }
+            if (d.showNormals != null) {
+                this.showNormals = d.showNormals;
+                const cb = document.getElementById('showNormals'); if (cb) cb.checked = d.showNormals;
             }
             if (d.showRibs != null) {
                 this.showRibs = d.showRibs;
@@ -936,6 +1072,9 @@
             });
             document.getElementById('showSegColors').addEventListener('change', e => {
                 this.showSegColors = e.target.checked; this.rebuild();
+            });
+            document.getElementById('showNormals').addEventListener('change', e => {
+                this.showNormals = e.target.checked; this.buildNormals();
             });
             document.getElementById('showRibs').addEventListener('change', e => {
                 this.showRibs = e.target.checked; this.buildRibs();
