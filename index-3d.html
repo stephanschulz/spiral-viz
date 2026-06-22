@@ -99,11 +99,11 @@
         <div class="section">
             <h3>LED Tube Profile</h3>
             <div class="profiles">
-                <div class="profile-opt active" data-profile="current">
+                <div class="profile-opt" data-profile="current">
                     <img src="profiles/current-profile.jpg" alt="current profile">
                     <span>Current<br>16 × 25 mm</span>
                 </div>
-                <div class="profile-opt" data-profile="new">
+                <div class="profile-opt active" data-profile="new">
                     <img src="profiles/new-profile.jpg" alt="new profile">
                     <span>New<br>4 × 12 mm</span>
                 </div>
@@ -115,8 +115,8 @@
 
         <div class="section">
             <h3>Curvature</h3>
-            <label class="ctrl">Concave Curvature — edge rise <span class="val" id="curvatureVal">0 cm</span>
-                <input type="range" id="curvature" min="0" max="100" step="1" value="0">
+            <label class="ctrl">Concave Curvature — edge rise <span class="val" id="curvatureVal">30 cm</span>
+                <input type="range" id="curvature" min="0" max="100" step="1" value="30">
             </label>
             <label class="ctrl">Aim Offset (± from normal) <span class="val" id="normalOffsetVal">0°</span>
                 <input type="range" id="normalOffset" min="-45" max="45" step="1" value="0">
@@ -128,25 +128,25 @@
             <label class="ctrl">Start Angle <span class="val" id="startAngleVal">120°</span>
                 <input type="range" id="startAngle" min="0" max="360" step="1" value="120">
             </label>
-            <label class="ctrl">Inner Diameter <span class="val" id="innerDiameterVal">186 mm</span>
-                <input type="range" id="innerDiameter" min="0" max="500" step="2" value="186">
+            <label class="ctrl">Inner Diameter <span class="val" id="innerDiameterVal">120 mm</span>
+                <input type="range" id="innerDiameter" min="0" max="500" step="2" value="120">
             </label>
-            <label class="ctrl">Tube Pitch (center-to-center) <span class="val" id="spiralSpacingVal">26.0 mm</span>
-                <input type="range" id="spiralSpacing" min="5" max="120" step="0.5" value="26">
+            <label class="ctrl">Tube Pitch (center-to-center) <span class="val" id="spiralSpacingVal">10.0 mm</span>
+                <input type="range" id="spiralSpacing" min="5" max="120" step="0.5" value="10">
             </label>
             <label class="cb"><input type="checkbox" id="ccwWinding" checked> CCW winding</label>
         </div>
 
         <div class="section">
             <h3>Segments</h3>
-            <label class="ctrl">Segment Count <span class="val" id="segmentMountsVal">31</span>
-                <input type="range" id="segmentMounts" min="1" max="80" step="1" value="31">
+            <label class="ctrl">Segment Count <span class="val" id="segmentMountsVal">27</span>
+                <input type="range" id="segmentMounts" min="1" max="80" step="1" value="27">
             </label>
             <label class="ctrl">Segment Length <span class="val" id="segmentLengthVal">500 cm</span>
                 <input type="range" id="segmentLength" min="10" max="1000" step="5" value="500">
             </label>
-            <label class="ctrl">Segment Gap <span class="val" id="segmentGapVal">0.0 mm</span>
-                <input type="range" id="segmentGap" min="0" max="5" step="0.5" value="0">
+            <label class="ctrl">Segment Gap <span class="val" id="segmentGapVal">0.5 mm</span>
+                <input type="range" id="segmentGap" min="0" max="5" step="0.5" value="0.5">
             </label>
         </div>
 
@@ -248,15 +248,15 @@
 
             // params (same defaults as the 2D view, GUI units)
             this.startAngle = 120;       // deg
-            this.innerDiameter = 186;    // mm
-            this.spiralSpacing = 26;     // mm pitch
+            this.innerDiameter = 120;    // mm
+            this.spiralSpacing = 10;     // mm pitch
             this.reverseWinding = false; // false = CCW
             this.segmentLength = 500;    // cm
-            this.segmentMounts = 31;     // count
-            this.segmentGap = 0;         // mm
-            this.profileKey = 'current';
+            this.segmentMounts = 27;     // count
+            this.segmentGap = 0.5;       // mm
+            this.profileKey = 'new';
             this.profileScale = 1;
-            this.curvatureCm = 0;        // edge rise in cm (0 = flat)
+            this.curvatureCm = 30;       // edge rise in cm (0 = flat)
             this.normalOffsetDeg = 0;    // ± tilt of the aim away from the surface normal
             this.showGrid = true;
             this.showSegColors = true;
