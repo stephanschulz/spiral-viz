@@ -118,6 +118,9 @@
             <label class="ctrl">Concave Curvature — edge rise <span class="val" id="curvatureVal">0 cm</span>
                 <input type="range" id="curvature" min="0" max="100" step="1" value="0">
             </label>
+            <label class="ctrl">Aim Offset (± from normal) <span class="val" id="normalOffsetVal">0°</span>
+                <input type="range" id="normalOffset" min="-45" max="45" step="1" value="0">
+            </label>
         </div>
 
         <div class="section">
@@ -180,7 +183,7 @@
             Segments: <b id="segInfo">--</b>
         </div>
         <div id="ribDraw">
-            <div id="ribDrawTitle">Single rib — construction (6 o'clock)</div>
+            <div id="ribDrawTitle">Single rib — construction (6 o'clock) · scroll zoom, drag pan, dbl-click reset</div>
             <canvas id="ribCanvas"></canvas>
         </div>
     </div>
@@ -188,15 +191,14 @@
     <script type="importmap">
     {
         "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            "three": "./vendor/three.module.js"
         }
     }
     </script>
 
     <script type="module">
     import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { OrbitControls } from './vendor/OrbitControls.js';
 
     // ---------- LED tube profiles (cross-section outline, in mm) ----------
     // u = lateral offset from path centerline, v = height above mounting surface.
@@ -204,18 +206,19 @@
         // current-profile.jpg: ~12 mm base, ~16 mm bulb, 25 mm tall.
         const baseHalf = 6, bulbR = 8, bulbCy = 17;
         const yMeet = bulbCy - Math.sqrt(bulbR * bulbR - baseHalf * baseHalf); // base meets bulb
+        // emit:true marks the curved front where light comes out (the bulb arc).
         const pts = [];
-        pts.push({ u: baseHalf, v: 0 });
-        pts.push({ u: baseHalf, v: yMeet });
+        pts.push({ u: baseHalf, v: 0, emit: false });
+        pts.push({ u: baseHalf, v: yMeet, emit: false });
         const a0 = Math.atan2(yMeet - bulbCy, baseHalf);       // lower-right
         const a1 = Math.PI - a0;                                // lower-left (mirror), going over the top
         const steps = 28;
         for (let i = 1; i <= steps; i++) {
             const a = a0 + (a1 - a0) * (i / steps);
-            pts.push({ u: bulbR * Math.cos(a), v: bulbCy + bulbR * Math.sin(a) });
+            pts.push({ u: bulbR * Math.cos(a), v: bulbCy + bulbR * Math.sin(a), emit: true });
         }
-        pts.push({ u: -baseHalf, v: yMeet });
-        pts.push({ u: -baseHalf, v: 0 });
+        pts.push({ u: -baseHalf, v: yMeet, emit: false });
+        pts.push({ u: -baseHalf, v: 0, emit: false });
         return pts;
     }
 
@@ -223,15 +226,15 @@
         // new-profile.jpg: 4 mm wide, 12 mm tall, round emitter cap on top.
         const half = 2, straight = 10, capR = 2, capCy = 10;
         const pts = [];
-        pts.push({ u: half, v: 0 });
-        pts.push({ u: half, v: straight });
+        pts.push({ u: half, v: 0, emit: false });
+        pts.push({ u: half, v: straight, emit: false });
         const steps = 18;
         for (let i = 1; i <= steps; i++) {
             const a = (Math.PI) * (i / steps); // 0 .. PI over the top (right -> left)
-            pts.push({ u: capR * Math.cos(a), v: capCy + capR * Math.sin(a) });
+            pts.push({ u: capR * Math.cos(a), v: capCy + capR * Math.sin(a), emit: true });
         }
-        pts.push({ u: -half, v: straight });
-        pts.push({ u: -half, v: 0 });
+        pts.push({ u: -half, v: straight, emit: false });
+        pts.push({ u: -half, v: 0, emit: false });
         return pts;
     }
 
@@ -253,6 +256,7 @@
             this.profileKey = 'current';
             this.profileScale = 1;
             this.curvatureCm = 0;        // edge rise in cm (0 = flat)
+            this.normalOffsetDeg = 0;    // ± tilt of the aim away from the surface normal
             this.showGrid = true;
             this.showSegColors = true;
 
@@ -281,9 +285,12 @@
         initScene() {
             this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
             this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+            this.renderer.toneMapping = THREE.NoToneMapping;
 
             this.scene = new THREE.Scene();
-            this.scene.background = new THREE.Color(0x1a1d24);
+            this.scene.background = new THREE.Color(0xeef1f5);   // technical / blueprint
 
             // Wall mount: the wall is the XY plane (z = 0), the spiral is drawn on it,
             // and the tubes (plus any concave curvature) extend toward the viewer in +Z.
@@ -291,16 +298,15 @@
             this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
             this.camera.up.set(0, 1, 0);
 
+            // flat, even lighting for the technical look
             this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-            const dir = new THREE.DirectionalLight(0xffffff, 0.9);
-            dir.position.set(2, -3, 4);
-            this.scene.add(dir);
-            const dir2 = new THREE.DirectionalLight(0x88aaff, 0.35);
-            dir2.position.set(-3, 2, 2);
-            this.scene.add(dir2);
+            this.scene.add(new THREE.HemisphereLight(0xffffff, 0x404858, 0.9));
+            const dir1 = new THREE.DirectionalLight(0xffffff, 0.45); dir1.position.set(2, -3, 4);
+            const dir2 = new THREE.DirectionalLight(0xffffff, 0.2); dir2.position.set(-3, 2, 2);
+            this.scene.add(dir1, dir2);
 
             // Grid stands in for the wall: vertical, in the XY plane at z = 0.
-            this.grid = new THREE.GridHelper(6, 30, 0x44505f, 0x2c333d);
+            this.grid = new THREE.GridHelper(6, 30, 0x9aa3b0, 0xc4ccd6);
             this.grid.rotation.x = Math.PI / 2; // GridHelper is XZ by default → put it in XY (wall)
             this.scene.add(this.grid);
 
@@ -320,6 +326,19 @@
             this.controls.minDistance = 0.05;
             this.controls.maxDistance = 50;
             this.onResize();
+        }
+
+        // Technical (CAD-style) tube + rib materials. Tubes are black housings with a
+        // lighter-grey emitter front so the cross-section profile reads; flat-shaded.
+        makeMaterials() {
+            const S = THREE.DoubleSide;
+            return {
+                housingA: new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.9, metalness: 0, flatShading: true, side: S }),
+                housingB: new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.9, metalness: 0, flatShading: true, side: S }),
+                emitter:  new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.85, metalness: 0, flatShading: true, side: S }),
+                // semi-transparent so the tubes are visible sitting in the teeth
+                rib:      new THREE.MeshStandardMaterial({ color: 0xb8bec8, roughness: 1, metalness: 0, flatShading: true, side: S, transparent: true, opacity: 0.4, depthWrite: false }),
+            };
         }
 
         // ---------- Centerline + segments (mirrors the 2D computeSpiral, coarser step) ----------
@@ -409,17 +428,25 @@
             return rise * f * f;
         }
 
-        // surface normal of the dish at (x,y,r), normalized
+        // Surface normal of the dish at (x,y,r), with an optional in-meridian-plane
+        // angular offset so the aim can be canted toward/away from the focal point.
         dishNormal(x, y, r) {
             const rise = this.curvatureCm / 100;
-            if (rise === 0) return new THREE.Vector3(0, 0, 1);
-            // z = rise * (r/rMax)^2 = (rise/rMax^2)*(x^2+y^2) → grad = 2k*(x,y)
-            const k = rise / (this.rMax * this.rMax);
-            const n = new THREE.Vector3(-2 * k * x, -2 * k * y, 1);
-            return n.normalize();
+            const slope = rise === 0 ? 0 : 2 * rise * r / (this.rMax * this.rMax);
+            // normal in the meridian (radial, z) plane, then optional ± tilt
+            let nr = -slope, nz = 1;
+            const a = this.normalOffsetDeg * Math.PI / 180;
+            if (a !== 0) {
+                const ca = Math.cos(a), sa = Math.sin(a);
+                [nr, nz] = [nr * ca - nz * sa, nr * sa + nz * ca];
+            }
+            const L = Math.hypot(nr, nz);
+            nr /= L; nz /= L;
+            if (r < 1e-9) return new THREE.Vector3(0, 0, 1);
+            return new THREE.Vector3((x / r) * nr, (y / r) * nr, nz);
         }
 
-        buildSegmentMesh(points, seg, profile2D, material) {
+        buildSegmentMesh(points, seg, profile2D, housingMat, emitterMat) {
             const i0 = seg.start, i1 = seg.end;
             const ringCount = i1 - i0 + 1;
             if (ringCount < 2) return null;
@@ -463,16 +490,20 @@
                     positions.push(v.x, v.y, v.z);
                 }
             }
-            const indices = [];
+            // Side walls split into two groups: the emitter band (light-out front) and
+            // the housing (everything else). An edge emits only if both its profile
+            // endpoints are flagged emit.
+            const housingIdx = [], emitterIdx = [];
             for (let i = 0; i < ringCount - 1; i++) {
                 for (let j = 0; j < pn; j++) {
                     const jn = (j + 1) % pn;
                     const a = vertIndex(i, j), b = vertIndex(i, jn);
                     const c = vertIndex(i + 1, j), d = vertIndex(i + 1, jn);
-                    indices.push(a, c, b, b, c, d);
+                    const dst = (profile2D[j].emit && profile2D[jn].emit) ? emitterIdx : housingIdx;
+                    dst.push(a, c, b, b, c, d);
                 }
             }
-            // end caps (fan from cross-section centroid)
+            // end caps (fan from cross-section centroid) → housing
             let cu = 0, cv = 0;
             for (const pp of profile2D) { cu += pp.u; cv += pp.v; }
             cu /= pn; cv /= pn;
@@ -486,7 +517,7 @@
                 for (let j = 0; j < pn; j++) {
                     const jn = (j + 1) % pn;
                     const a = vertIndex(ring, j), b = vertIndex(ring, jn);
-                    if (flip) indices.push(ci, b, a); else indices.push(ci, a, b);
+                    if (flip) housingIdx.push(ci, b, a); else housingIdx.push(ci, a, b);
                 }
             };
             addCap(0, false);
@@ -494,9 +525,11 @@
 
             const geom = new THREE.BufferGeometry();
             geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-            geom.setIndex(indices);
+            geom.setIndex(housingIdx.concat(emitterIdx));
+            geom.addGroup(0, housingIdx.length, 0);          // material 0 = housing
+            geom.addGroup(housingIdx.length, emitterIdx.length, 1); // material 1 = emitter
             geom.computeVertexNormals();
-            return new THREE.Mesh(geom, material);
+            return new THREE.Mesh(geom, [housingMat, emitterMat]);
         }
 
         // Radii where the spiral crosses a given azimuth (one per turn).
@@ -520,14 +553,17 @@
             if (!meta) return null;
             const profile = PROFILES[this.profileKey];
             const s = 0.001 * this.profileScale;
-            let tubeH = 0, umin = Infinity, umax = -Infinity;
+            // base rectangle = the housing below the emitter: its width (at the wall) and
+            // its height (up to where the emitter begins). The tooth slot matches it.
+            let umin = Infinity, umax = -Infinity, minEmitV = Infinity, maxV = 0;
             for (const pp of profile) {
-                tubeH = Math.max(tubeH, pp.v);
+                maxV = Math.max(maxV, pp.v);
+                if (pp.emit) minEmitV = Math.min(minEmitV, pp.v);
                 if (pp.v <= 0.5) { umin = Math.min(umin, pp.u); umax = Math.max(umax, pp.u); }
             }
-            const tubeHeightM = tubeH * s;
             const baseWidthM = (umax - umin) * s;
-            const standProud = Math.max(0.004, tubeHeightM * 0.5);
+            const baseHeightM = (isFinite(minEmitV) ? minEmitV : maxV * 0.5) * s;
+            const standProud = Math.max(0.004, baseHeightM);   // slot depth = base height
             const pitchM = this.spiralSpacing / 1000;
             const notchHalf = Math.min(baseWidthM, pitchM * 0.7) / 2;
             const rStart = meta.rInner, rEnd = meta.rMax;
@@ -542,51 +578,69 @@
                 const e = 1e-4;
                 return (this.surfaceZ(r + e) - this.surfaceZ(r - e)) / (2 * e);
             };
+            const offRad = this.normalOffsetDeg * Math.PI / 180;
             const frameAt = (r) => {
                 const sp = slopeAt(r), L = Math.hypot(1, sp);
-                return { P: [r, this.surfaceZ(r)], N: [-sp / L, 1 / L], Tm: [1 / L, sp / L], sp };
+                let N = [-sp / L, 1 / L], Tm = [1 / L, sp / L];
+                if (offRad !== 0) {
+                    const ca = Math.cos(offRad), sa = Math.sin(offRad);
+                    const rot = (v) => [v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca];
+                    N = rot(N); Tm = rot(Tm);
+                }
+                return { P: [r, this.surfaceZ(r)], N, Tm, sp };
             };
-            // clamp the tooth height along the normal so opposite slot walls never cross
-            const proudAt = (sp) => Math.min(standProud, 1.7 * notchHalf / Math.max(Math.abs(sp), 1e-3));
+            // rib top = the concave dish curve offset out along the normal
             const topAlongN = (r) => {
-                const f = frameAt(r), pr = proudAt(f.sp);
-                return [f.P[0] + f.N[0] * pr, f.P[1] + f.N[1] * pr];
+                const f = frameAt(r);
+                return [f.P[0] + f.N[0] * standProud, f.P[1] + f.N[1] * standProud];
             };
 
-            const teeth = [];                          // {r, P, N} for the 2D diagram
-            const top = [];                            // top edge, increasing r
+            // The rib top follows that curve, sampled finely so it stays smooth. Each
+            // tooth cuts a TRUE rectangle (matching the LED base: walls ‖ the aim N,
+            // floor ‖ Tm, so 90° corners) down into the curve.
+            const sampleCurve = (r0, r1, arr) => {
+                const n = Math.max(1, Math.round(Math.abs(r1 - r0) / 0.008)); // ~8 mm steps
+                for (let i = 1; i <= n; i++) arr.push(topAlongN(r0 + (r1 - r0) * (i / n)));
+            };
+
+            const teeth = [];                          // {r, P, N, Tm} for the 2D diagram
+            const top = [];                            // top edge (the dish curve), increasing r
             top.push(topAlongN(rStart));
+            let rprev = rStart;
             for (const rc of crossings) {
-                const f = frameAt(rc), pr = proudAt(f.sp);
+                const f = frameAt(rc);
                 const P = f.P, N = f.N, Tm = f.Tm;
-                const wLT = [P[0] + N[0] * pr - Tm[0] * notchHalf, P[1] + N[1] * pr - Tm[1] * notchHalf];
-                const wLB = [P[0] - Tm[0] * notchHalf, P[1] - Tm[1] * notchHalf];
-                const wRB = [P[0] + Tm[0] * notchHalf, P[1] + Tm[1] * notchHalf];
-                const wRT = [P[0] + N[0] * pr + Tm[0] * notchHalf, P[1] + N[1] * pr + Tm[1] * notchHalf];
-                top.push(wLT, wLB, wRB, wRT);          // down one wall, across floor, up the other
-                teeth.push({ r: rc, P, N });
+                const BL = [P[0] - Tm[0] * notchHalf, P[1] - Tm[1] * notchHalf]; // base bottom-left
+                const BR = [P[0] + Tm[0] * notchHalf, P[1] + Tm[1] * notchHalf]; // base bottom-right
+                const TL = [BL[0] + N[0] * standProud, BL[1] + N[1] * standProud];
+                const TR = [BR[0] + N[0] * standProud, BR[1] + N[1] * standProud];
+                sampleCurve(rprev, TL[0], top);        // curve up to the slot's left lip
+                top.push(TL, BL, BR, TR);              // down left wall, across base, up right wall
+                rprev = TR[0];
+                teeth.push({ r: rc, P, N, Tm });
             }
-            top.push(topAlongN(rEnd));
+            sampleCurve(rprev, rEnd, top);             // curve out to the rim
 
             const outline = [[rStart, 0], [rEnd, 0]];  // bottom edge on the wall
             for (let i = top.length - 1; i >= 0; i--) outline.push(top[i]); // outer edge + top
             outline.push([rStart, 0]);                 // inner edge down → close
 
-            return { outline, crossings, teeth, notchHalf, standProud, rStart, rEnd, pitchM, frameAt };
+            return { outline, crossings, teeth, notchHalf, standProud, baseWidthM, baseHeightM, rStart, rEnd, pitchM, frameAt };
         }
 
         buildRibs() {
             while (this.ribGroup.children.length) {
                 const r = this.ribGroup.children.pop();
-                r.geometry?.dispose();
+                r.traverse(o => o.geometry?.dispose());
             }
             this.drawRibDrawing();           // keep the 2D diagram in sync
             if (!this.showRibs || this.ribCount < 1 || !this.spiralMeta) return;
 
             const thicknessM = this.ribThickness / 1000;
-            const ribMat = new THREE.MeshStandardMaterial({
+            const ribMat = (this._mats && this._mats.rib) || new THREE.MeshStandardMaterial({
                 color: 0x9aa3b0, roughness: 0.8, metalness: 0.0, side: THREE.DoubleSide
             });
+            const edgeMat = new THREE.LineBasicMaterial({ color: 0x2a3038 });
 
             for (let k = 0; k < this.ribCount; k++) {
                 const phi = this.ribStartAngle + (k / this.ribCount) * Math.PI * 2;
@@ -600,6 +654,7 @@
                 const geom = new THREE.ExtrudeGeometry(shape, { depth: thicknessM, bevelEnabled: false });
                 geom.translate(0, 0, -thicknessM / 2);  // center the 2 mm thickness on the rib plane
                 const mesh = new THREE.Mesh(geom, ribMat);
+                mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom, 30), edgeMat));
                 // Place: local X → radial, local Y → world Z (up), local Z → tangential (thickness)
                 const basis = new THREE.Matrix4().makeBasis(
                     new THREE.Vector3(Math.cos(phi), Math.sin(phi), 0),
@@ -619,10 +674,44 @@
             canvas.height = this.ribDrawH * dpr;
             this.ribCtx = canvas.getContext('2d');
             this.ribCtx.scale(dpr, dpr);
+
+            // view transform for the rib diagram (zoom centered on the cursor + pan)
+            this.ribZoom = 1; this.ribPanX = 0; this.ribPanY = 0;
+            canvas.style.cursor = 'grab';
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                const nz = Math.min(50, Math.max(1, this.ribZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+                const f = nz / this.ribZoom;
+                // keep the point under the cursor fixed
+                this.ribPanX = mx - (mx - this.ribPanX) * f;
+                this.ribPanY = my - (my - this.ribPanY) * f;
+                this.ribZoom = nz;
+                if (nz === 1) { this.ribPanX = 0; this.ribPanY = 0; }
+                this.drawRibDrawing();
+            }, { passive: false });
+
+            let dragging = false, lastX = 0, lastY = 0;
+            canvas.addEventListener('mousedown', (e) => {
+                dragging = true; lastX = e.clientX; lastY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+            });
+            window.addEventListener('mousemove', (e) => {
+                if (!dragging) return;
+                this.ribPanX += e.clientX - lastX; this.ribPanY += e.clientY - lastY;
+                lastX = e.clientX; lastY = e.clientY;
+                this.drawRibDrawing();
+            });
+            window.addEventListener('mouseup', () => { dragging = false; canvas.style.cursor = 'grab'; });
+            canvas.addEventListener('dblclick', () => {
+                this.ribZoom = 1; this.ribPanX = 0; this.ribPanY = 0; this.drawRibDrawing();
+            });
         }
 
-        // 2D construction drawing of a single rib (the 6 o'clock one), shown to TRUE
-        // scale so the teeth — and the direction each held tube aims — are honest.
+        // 2D construction drawing of a single rib (the 6 o'clock one), drawn TRUE scale
+        // so the angled tooth slots match the rectangular LED base shown nested in each.
         drawRibDrawing() {
             const ctx = this.ribCtx;
             if (!ctx) return;
@@ -632,24 +721,33 @@
             if (!data || data.outline.length < 3) return;
 
             const mm = (m) => m * 1000;
-            const aimLen = Math.max(0.03, data.standProud * 2.5); // length of the aim arrows
+            const profile = PROFILES[this.profileKey];
+            const ps = 0.001 * this.profileScale;
+            // The full LED cross-section seated in a tooth: profile (u,v) → meridian
+            // (u → Tm/sideways, v → N/aim), base in the slot, bulb above the rib.
+            const profilePoly = (t) => profile.map(pp => [
+                t.P[0] + t.Tm[0] * pp.u * ps + t.N[0] * pp.v * ps,
+                t.P[1] + t.Tm[1] * pp.u * ps + t.N[1] * pp.v * ps,
+            ]);
 
-            // bounding box over the rib outline + the tube-aim arrows (equal aspect)
+            // bbox over rib outline + the tube profiles (equal aspect → true shapes)
             let rMin = Infinity, rMax = -Infinity, zMin = Infinity, zMax = -Infinity;
             const grow = (x, z) => {
                 rMin = Math.min(rMin, x); rMax = Math.max(rMax, x);
                 zMin = Math.min(zMin, z); zMax = Math.max(zMax, z);
             };
             for (const p of data.outline) grow(p[0], p[1]);
-            for (const t of data.teeth) grow(t.P[0] + t.N[0] * aimLen, t.P[1] + t.N[1] * aimLen);
+            for (const t of data.teeth) for (const c of profilePoly(t)) grow(c[0], c[1]);
 
-            const mL = 14, mR = 14, mTop = 30, mBot = 16;
+            const mL = 14, mR = 14, mTop = 30, mBot = 14;
             const spanR = Math.max(rMax - rMin, 1e-4), spanZ = Math.max(zMax - zMin, 1e-4);
             const scale = Math.min((W - mL - mR) / spanR, (H - mTop - mBot) / spanZ);
             const offX = mL + ((W - mL - mR) - spanR * scale) / 2;
             const offY = mTop + ((H - mTop - mBot) - spanZ * scale) / 2;
-            const cx = (r) => offX + (r - rMin) * scale;
-            const cy = (z) => offY + (zMax - z) * scale;   // z up
+            // user zoom/pan on top of the fit transform
+            const z = this.ribZoom, px = this.ribPanX, py = this.ribPanY;
+            const cx = (r) => (offX + (r - rMin) * scale) * z + px;
+            const cy = (zz) => (offY + (zMax - zz) * scale) * z + py;
 
             // summary
             ctx.fillStyle = '#c4c8d0';
@@ -657,36 +755,46 @@
             ctx.textAlign = 'left';
             ctx.fillText(
                 `${data.teeth.length} teeth · pitch ${mm(data.pitchM).toFixed(1)} mm · ` +
+                `base ${mm(data.baseWidthM).toFixed(0)}×${mm(data.baseHeightM).toFixed(0)} mm · ` +
                 `${mm(data.rEnd - data.rStart).toFixed(0)} mm wide`, mL, 13);
             ctx.fillStyle = '#7f8794';
-            ctx.fillText('true scale · teeth aim along the dish normal', mL, 24);
+            ctx.fillText('true scale · tube profile in each tooth (emitter = yellow)', mL, 24);
 
             // rib body
             ctx.beginPath();
             ctx.moveTo(cx(data.outline[0][0]), cy(data.outline[0][1]));
             for (let i = 1; i < data.outline.length; i++) ctx.lineTo(cx(data.outline[i][0]), cy(data.outline[i][1]));
             ctx.closePath();
-            ctx.fillStyle = 'rgba(154,163,176,0.30)';
+            ctx.fillStyle = 'rgba(154,163,176,0.28)';
             ctx.fill();
             ctx.strokeStyle = '#aab2bf';
             ctx.lineWidth = 1;
             ctx.stroke();
 
-            // tube aim arrows along the surface normal at each tooth (they fan toward
-            // the focal point as the dish curves)
-            ctx.strokeStyle = '#5fd0ff';
-            ctx.fillStyle = '#5fd0ff';
-            ctx.lineWidth = 1.3;
+            // LED tube cross-section seated in each tooth (housing body + emitter front)
             for (const t of data.teeth) {
-                const x1 = cx(t.P[0]), y1 = cy(t.P[1]);
-                const x2 = cx(t.P[0] + t.N[0] * aimLen), y2 = cy(t.P[1] + t.N[1] * aimLen);
-                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-                const ah = 3, a = Math.atan2(y2 - y1, x2 - x1);
+                const poly = profilePoly(t);
                 ctx.beginPath();
-                ctx.moveTo(x2, y2);
-                ctx.lineTo(x2 - ah * Math.cos(a - 0.4), y2 - ah * Math.sin(a - 0.4));
-                ctx.lineTo(x2 - ah * Math.cos(a + 0.4), y2 - ah * Math.sin(a + 0.4));
-                ctx.closePath(); ctx.fill();
+                ctx.moveTo(cx(poly[0][0]), cy(poly[0][1]));
+                for (let i = 1; i < poly.length; i++) ctx.lineTo(cx(poly[i][0]), cy(poly[i][1]));
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(34,38,46,0.6)';   // dark housing body
+                ctx.fill();
+                ctx.strokeStyle = '#8b929c';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+                // emitter front (where the light comes out) drawn bright
+                ctx.strokeStyle = '#ffd24a';
+                ctx.lineWidth = 1.6;
+                ctx.beginPath();
+                for (let j = 0; j < profile.length; j++) {
+                    const jn = (j + 1) % profile.length;
+                    if (profile[j].emit && profile[jn].emit) {
+                        ctx.moveTo(cx(poly[j][0]), cy(poly[j][1]));
+                        ctx.lineTo(cx(poly[jn][0]), cy(poly[jn][1]));
+                    }
+                }
+                ctx.stroke();
             }
         }
 
@@ -699,18 +807,12 @@
             const { points, segments } = this.computeCenterline();
             const profile = PROFILES[this.profileKey];
 
-            const matA = new THREE.MeshStandardMaterial({
-                color: 0xfff1b0, emissive: 0xffce4a, emissiveIntensity: 0.55,
-                roughness: 0.45, metalness: 0.0, side: THREE.DoubleSide
-            });
-            const matB = new THREE.MeshStandardMaterial({
-                color: 0xfff7d6, emissive: 0xffe07a, emissiveIntensity: 0.55,
-                roughness: 0.45, metalness: 0.0, side: THREE.DoubleSide
-            });
+            this._mats = this.makeMaterials();
+            const { housingA, housingB, emitter } = this._mats;
 
             segments.forEach((seg, idx) => {
-                const mat = this.showSegColors ? (idx % 2 ? matB : matA) : matA;
-                const mesh = this.buildSegmentMesh(points, seg, profile, mat);
+                const housing = this.showSegColors ? (idx % 2 ? housingB : housingA) : housingA;
+                const mesh = this.buildSegmentMesh(points, seg, profile, housing, emitter);
                 if (mesh) this.tubeGroup.add(mesh);
             });
 
@@ -727,6 +829,7 @@
                 profileKey: this.profileKey,
                 profileScale: this.profileScale,
                 curvatureCm: this.curvatureCm,
+                normalOffsetDeg: this.normalOffsetDeg,
                 startAngle: this.startAngle,
                 innerDiameter: this.innerDiameter,
                 spiralSpacing: this.spiralSpacing,
@@ -753,6 +856,7 @@
             const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
             setVal('profileScale', d.profileScale);
             setVal('curvature', d.curvatureCm);
+            setVal('normalOffset', d.normalOffsetDeg);
             setVal('startAngle', d.startAngle);
             setVal('innerDiameter', d.innerDiameter);
             setVal('spiralSpacing', d.spiralSpacing);
@@ -813,6 +917,7 @@
             };
             slider('profileScale', v => v.toFixed(1) + '×', v => this.profileScale = v);
             slider('curvature', v => v + ' cm', v => this.curvatureCm = v);
+            slider('normalOffset', v => v + '°', v => this.normalOffsetDeg = v);
             slider('startAngle', v => v + '°', v => this.startAngle = v);
             slider('innerDiameter', v => v + ' mm', v => this.innerDiameter = v);
             slider('spiralSpacing', v => v.toFixed(1) + ' mm', v => this.spiralSpacing = v);
