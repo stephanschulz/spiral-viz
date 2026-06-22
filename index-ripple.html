@@ -132,8 +132,8 @@
             <label class="ctrl">Wavelength <span class="val" id="rippleWaveVal">12 cm</span>
                 <input type="range" id="rippleWave" min="2" max="60" step="1" value="12">
             </label>
-            <label class="ctrl">Decay (fade outward) <span class="val" id="rippleDecayVal">0.0</span>
-                <input type="range" id="rippleDecay" min="0" max="3" step="0.1" value="0">
+            <label class="ctrl">Falloff toward edge <span class="val" id="rippleDecayVal">0.0</span>
+                <input type="range" id="rippleDecay" min="0" max="4" step="0.1" value="0">
             </label>
             <label class="ctrl">Drop X offset <span class="val" id="rippleXVal">0 cm</span>
                 <input type="range" id="rippleX" min="-120" max="120" step="1" value="0">
@@ -476,12 +476,31 @@
         ripple(x, y) {
             const A = this.rippleAmpCm / 100;
             if (A === 0) return 0;
-            const dx = x - this.rippleXCm / 100, dy = y - this.rippleYCm / 100;
+            const ox = this.rippleXCm / 100, oy = this.rippleYCm / 100;
+            const dx = x - ox, dy = y - oy;
             const d = Math.hypot(dx, dy);
+            // Envelope tapers to exactly 0 at the spiral's outer boundary. The distance
+            // to that boundary is computed per-direction from the drop, so the entire
+            // outer turn is flat no matter where the drop sits (no seashell edge).
+            const edge = this.rippleEdgeDist(ox, oy, dx, dy, d);
+            if (!(edge > 0)) return 0;
+            const t = Math.min(1, d / edge);
+            const env = Math.pow(1 - t, 1 + this.rippleDecay * 2);
             const k = 2 * Math.PI / Math.max(0.001, this.rippleWaveCm / 100);
             const ph = this.ripplePhaseDeg * Math.PI / 180;
-            const decay = this.rippleDecay > 0 ? Math.exp(-d * this.rippleDecay) : 1;
-            return A * decay * Math.cos(k * d - ph);
+            return A * env * Math.cos(k * d - ph);
+        }
+
+        // Distance from the drop (ox,oy) to the spiral's outer boundary circle
+        // (radius rMax, centred at origin) along direction (dx,dy).
+        rippleEdgeDist(ox, oy, dx, dy, d) {
+            const R = this.rMax;
+            if (d < 1e-9) return Math.max(1e-6, R - Math.hypot(ox, oy));
+            const ux = dx / d, uy = dy / d;
+            const pu = ox * ux + oy * uy;
+            const disc = pu * pu + (R * R - (ox * ox + oy * oy));
+            if (disc <= 0) return R;                 // drop outside boundary → fallback
+            return Math.max(1e-6, -pu + Math.sqrt(disc));
         }
 
         // Full surface normal at (x,y): numeric gradient of dish+ripple, with the
