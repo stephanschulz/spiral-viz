@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spiral Visualizer — 3D</title>
+    <title>Spiral Visualizer — Ripple</title>
     <style>
         * { box-sizing: border-box; }
         html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -88,13 +88,13 @@
 <body>
     <div id="panel">
         <div class="panel-head">
-            <h1>Spiral — 3D</h1>
+            <h1>Spiral — Ripple</h1>
             <button class="mini-btn" id="minimizeBtn3d" title="Minimize panel">⟨⟨</button>
         </div>
         <div class="view-toggle">
             <a href="index.html">2D</a>
-            <a href="index-3d.html" class="active">3D</a>
-            <a href="index-ripple.html">Ripple</a>
+            <a href="index-3d.html">3D</a>
+            <a href="index-ripple.html" class="active">Ripple</a>
         </div>
 
         <div class="section">
@@ -122,6 +122,29 @@
             <label class="ctrl">Aim Offset (± from normal) <span class="val" id="normalOffsetVal">0°</span>
                 <input type="range" id="normalOffset" min="-45" max="45" step="1" value="0">
             </label>
+        </div>
+
+        <div class="section">
+            <h3>Ripple (water drop)</h3>
+            <label class="ctrl">Wave Height <span class="val" id="rippleAmpVal">3.0 cm</span>
+                <input type="range" id="rippleAmp" min="0" max="15" step="0.5" value="3">
+            </label>
+            <label class="ctrl">Wavelength <span class="val" id="rippleWaveVal">12 cm</span>
+                <input type="range" id="rippleWave" min="2" max="60" step="1" value="12">
+            </label>
+            <label class="ctrl">Decay (fade outward) <span class="val" id="rippleDecayVal">0.0</span>
+                <input type="range" id="rippleDecay" min="0" max="3" step="0.1" value="0">
+            </label>
+            <label class="ctrl">Drop X offset <span class="val" id="rippleXVal">0 cm</span>
+                <input type="range" id="rippleX" min="-120" max="120" step="1" value="0">
+            </label>
+            <label class="ctrl">Drop Y offset <span class="val" id="rippleYVal">0 cm</span>
+                <input type="range" id="rippleY" min="-120" max="120" step="1" value="0">
+            </label>
+            <label class="ctrl">Phase <span class="val" id="ripplePhaseVal">0°</span>
+                <input type="range" id="ripplePhase" min="0" max="360" step="2" value="0">
+            </label>
+            <label class="cb"><input type="checkbox" id="rippleAnimate"> Animate waves</label>
         </div>
 
         <div class="section">
@@ -259,6 +282,14 @@
             this.profileScale = 1;
             this.curvatureCm = 30;       // edge rise in cm (0 = flat)
             this.normalOffsetDeg = 0;    // ± tilt of the aim away from the surface normal
+            // Water-drop ripple
+            this.rippleAmpCm = 3;        // wave height (cm); 0 = off
+            this.rippleWaveCm = 12;      // wavelength between crests (cm)
+            this.rippleDecay = 0;        // fade with distance from drop (1/m); 0 = none
+            this.rippleXCm = 0;          // drop point X offset (cm)
+            this.rippleYCm = 0;          // drop point Y offset (cm)
+            this.ripplePhaseDeg = 0;     // wave phase — drag/animate to make waves travel
+            this.rippleAnimate = false;
             this.showGrid = true;
             this.showSegColors = true;
             this.showNormals = false;    // draw aim rays + focus marker
@@ -318,6 +349,12 @@
             this.scene.add(this.tubeGroup);
             this.scene.add(this.ribGroup);
             this.scene.add(this.normalGroup);
+
+            // marker for the ripple drop point
+            this.rippleMarker = new THREE.Mesh(
+                new THREE.SphereGeometry(0.015, 16, 12),
+                new THREE.MeshBasicMaterial({ color: 0x37c0ff }));
+            this.scene.add(this.rippleMarker);
 
             this.controls = new OrbitControls(this.camera, this.renderer.domElement);
             this.controls.enableDamping = true;
@@ -420,9 +457,10 @@
             return { points, segments };
         }
 
-        // Height of the mounting surface above the wall at radius r (tubes sit here).
-        surfaceZ(r) {
-            return this.baseStandoff + this.dishZ(r);
+        // Height of the mounting surface above the wall at (x,y): concave dish + ripple.
+        surfaceZ(x, y) {
+            const r = Math.hypot(x, y);
+            return this.baseStandoff + this.dishZ(r) + this.ripple(x, y);
         }
 
         // z height of the concave dish at radius r
@@ -433,22 +471,41 @@
             return rise * f * f;
         }
 
-        // Surface normal of the dish at (x,y,r), with an optional in-meridian-plane
-        // angular offset so the aim can be canted toward/away from the focal point.
-        dishNormal(x, y, r) {
-            const rise = this.curvatureCm / 100;
-            const slope = rise === 0 ? 0 : 2 * rise * r / (this.rMax * this.rMax);
-            // normal in the meridian (radial, z) plane, then optional ± tilt
-            let nr = -slope, nz = 1;
+        // Water-drop ripple: concentric waves radiating from the drop point (offset by
+        // rippleX/Y), with optional decay so it fades outward like a real splash.
+        ripple(x, y) {
+            const A = this.rippleAmpCm / 100;
+            if (A === 0) return 0;
+            const dx = x - this.rippleXCm / 100, dy = y - this.rippleYCm / 100;
+            const d = Math.hypot(dx, dy);
+            const k = 2 * Math.PI / Math.max(0.001, this.rippleWaveCm / 100);
+            const ph = this.ripplePhaseDeg * Math.PI / 180;
+            const decay = this.rippleDecay > 0 ? Math.exp(-d * this.rippleDecay) : 1;
+            return A * decay * Math.cos(k * d - ph);
+        }
+
+        // Full surface normal at (x,y): numeric gradient of dish+ripple, with the
+        // optional in-meridian-plane aim offset.
+        surfaceNormal(x, y) {
+            const e = 1e-4;
+            const zx = (this.surfaceZ(x + e, y) - this.surfaceZ(x - e, y)) / (2 * e);
+            const zy = (this.surfaceZ(x, y + e) - this.surfaceZ(x, y - e)) / (2 * e);
+            let nx = -zx, ny = -zy, nz = 1;
+            let L = Math.hypot(nx, ny, nz); nx /= L; ny /= L; nz /= L;
             const a = this.normalOffsetDeg * Math.PI / 180;
-            if (a !== 0) {
+            const r = Math.hypot(x, y);
+            if (a !== 0 && r > 1e-9) {
+                const erx = x / r, ery = y / r;       // radial unit (xy)
+                const etx = -ery, ety = erx;          // tangential unit (xy)
+                const nrad = nx * erx + ny * ery, ntan = nx * etx + ny * ety;
                 const ca = Math.cos(a), sa = Math.sin(a);
-                [nr, nz] = [nr * ca - nz * sa, nr * sa + nz * ca];
+                const nr2 = nrad * ca - nz * sa, nz2 = nrad * sa + nz * ca;
+                nx = nr2 * erx + ntan * etx;
+                ny = nr2 * ery + ntan * ety;
+                nz = nz2;
+                L = Math.hypot(nx, ny, nz); nx /= L; ny /= L; nz /= L;
             }
-            const L = Math.hypot(nr, nz);
-            nr /= L; nz /= L;
-            if (r < 1e-9) return new THREE.Vector3(0, 0, 1);
-            return new THREE.Vector3((x / r) * nr, (y / r) * nr, nz);
+            return new THREE.Vector3(nx, ny, nz);
         }
 
         buildSegmentMesh(points, seg, profile2D, housingMat, emitterMat) {
@@ -462,7 +519,7 @@
             const C = [];
             for (let i = i0; i <= i1; i++) {
                 const p = points[i];
-                C.push(new THREE.Vector3(p.x, p.y, this.surfaceZ(p.r)));
+                C.push(new THREE.Vector3(p.x, p.y, this.surfaceZ(p.x, p.y)));
             }
 
             // Tube frame: the tube's height axis U follows the dish surface normal, so
@@ -476,7 +533,7 @@
                 if (tmpT.lengthSq() < 1e-12) tmpT.set(1, 0, 0);
                 tmpT.normalize();
                 const gp = points[i0 + i];
-                const nSurf = this.dishNormal(gp.x, gp.y, gp.r);
+                const nSurf = this.surfaceNormal(gp.x, gp.y);
                 const b = new THREE.Vector3().crossVectors(tmpT, nSurf).normalize();
                 const u = new THREE.Vector3().crossVectors(b, tmpT).normalize();
                 B.push(b); U.push(u);
@@ -579,9 +636,12 @@
             // Dish frame in the (r,z) meridian plane (= the rib's own plane).
             // N is the surface normal; slots/teeth run along it so each held tube
             // aims along N (toward the dish focal point).
+            // surface height along this rib's own azimuth (so ribs follow the ripple too)
+            const cphi = Math.cos(phi), sphi = Math.sin(phi);
+            const sz = (r) => this.surfaceZ(r * cphi, r * sphi);
             const slopeAt = (r) => {
                 const e = 1e-4;
-                return (this.surfaceZ(r + e) - this.surfaceZ(r - e)) / (2 * e);
+                return (sz(r + e) - sz(r - e)) / (2 * e);
             };
             const offRad = this.normalOffsetDeg * Math.PI / 180;
             const frameAt = (r) => {
@@ -592,7 +652,7 @@
                     const rot = (v) => [v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca];
                     N = rot(N); Tm = rot(Tm);
                 }
-                return { P: [r, this.surfaceZ(r)], N, Tm, sp };
+                return { P: [r, sz(r)], N, Tm, sp };
             };
             // rib top = the concave dish curve offset out along the normal
             const topAlongN = (r) => {
@@ -865,8 +925,9 @@
             }
         }
 
-        rebuild() {
-            // clear old
+        // Rebuild just the tubes + drop marker (cheap enough to call per frame when
+        // the ripple is animating). Returns the segment list.
+        rebuildTubes() {
             while (this.tubeGroup.children.length) {
                 const m = this.tubeGroup.children.pop();
                 m.geometry?.dispose();
@@ -874,19 +935,24 @@
             const { points, segments } = this.computeCenterline();
             this._centerline = points;
             const profile = PROFILES[this.profileKey];
-
             this._mats = this.makeMaterials();
             const { housingA, housingB, emitter } = this._mats;
-
             segments.forEach((seg, idx) => {
                 const housing = this.showSegColors ? (idx % 2 ? housingB : housingA) : housingA;
                 const mesh = this.buildSegmentMesh(points, seg, profile, housing, emitter);
                 if (mesh) this.tubeGroup.add(mesh);
             });
+            // drop-point marker
+            const mx = this.rippleXCm / 100, my = this.rippleYCm / 100;
+            this.rippleMarker.position.set(mx, my, this.surfaceZ(mx, my) + 0.012);
+            this.rippleMarker.visible = this.rippleAmpCm > 0;
+            return segments;
+        }
 
+        rebuild() {
+            const segments = this.rebuildTubes();
             this.buildRibs();
             this.buildNormals();
-
             document.getElementById('lenInfo').textContent = this.totalLength.toFixed(2) + ' m';
             document.getElementById('turnInfo').textContent = this.turns.toFixed(1);
             document.getElementById('segInfo').textContent = segments.length;
@@ -906,8 +972,8 @@
             const samples = [];
             for (let i = 0; i < COUNT; i++) {
                 const p = pts[Math.floor(i / (COUNT - 1) * (pts.length - 1))];
-                const P = new THREE.Vector3(p.x, p.y, this.surfaceZ(p.r));
-                const N = this.dishNormal(p.x, p.y, p.r);   // unit aim direction
+                const P = new THREE.Vector3(p.x, p.y, this.surfaceZ(p.x, p.y));
+                const N = this.surfaceNormal(p.x, p.y);     // unit aim direction
                 samples.push({ P, N });
             }
 
@@ -975,12 +1041,18 @@
                 showRibs: this.showRibs,
                 ribCount: this.ribCount,
                 ribThickness: this.ribThickness,
+                rippleAmpCm: this.rippleAmpCm,
+                rippleWaveCm: this.rippleWaveCm,
+                rippleDecay: this.rippleDecay,
+                rippleXCm: this.rippleXCm,
+                rippleYCm: this.rippleYCm,
+                ripplePhaseDeg: this.ripplePhaseDeg,
             };
-            localStorage.setItem('spiralViz3DSettings', JSON.stringify(data));
+            localStorage.setItem('spiralVizRippleSettings', JSON.stringify(data));
         }
 
         loadSettings() {
-            const raw = localStorage.getItem('spiralViz3DSettings');
+            const raw = localStorage.getItem('spiralVizRippleSettings');
             if (!raw) return;
             let d;
             try { d = JSON.parse(raw); } catch (e) { return; }
@@ -998,6 +1070,12 @@
             setVal('segmentGap', d.segmentGap);
             setVal('ribCount', d.ribCount);
             setVal('ribThickness', d.ribThickness);
+            setVal('rippleAmp', d.rippleAmpCm);
+            setVal('rippleWave', d.rippleWaveCm);
+            setVal('rippleDecay', d.rippleDecay);
+            setVal('rippleX', d.rippleXCm);
+            setVal('rippleY', d.rippleYCm);
+            setVal('ripplePhase', d.ripplePhaseDeg);
             // Checkboxes / direct fields (no slider to sync them).
             if (d.reverseWinding != null) {
                 this.reverseWinding = d.reverseWinding;
@@ -1055,6 +1133,13 @@
             slider('profileScale', v => v.toFixed(1) + '×', v => this.profileScale = v);
             slider('curvature', v => v + ' cm', v => this.curvatureCm = v);
             slider('normalOffset', v => v + '°', v => this.normalOffsetDeg = v);
+            // ripple sliders rebuild tubes only (fast); ribs/normals refresh via full rebuild
+            slider('rippleAmp', v => v.toFixed(1) + ' cm', v => this.rippleAmpCm = v);
+            slider('rippleWave', v => v + ' cm', v => this.rippleWaveCm = v);
+            slider('rippleDecay', v => v.toFixed(1), v => this.rippleDecay = v);
+            slider('rippleX', v => v + ' cm', v => this.rippleXCm = v);
+            slider('rippleY', v => v + ' cm', v => this.rippleYCm = v);
+            slider('ripplePhase', v => v + '°', v => this.ripplePhaseDeg = v, () => this.rebuildTubes());
             slider('startAngle', v => v + '°', v => this.startAngle = v);
             slider('innerDiameter', v => v + ' mm', v => this.innerDiameter = v);
             slider('spiralSpacing', v => v.toFixed(1) + ' mm', v => this.spiralSpacing = v);
@@ -1073,6 +1158,9 @@
             });
             document.getElementById('showSegColors').addEventListener('change', e => {
                 this.showSegColors = e.target.checked; this.rebuild();
+            });
+            document.getElementById('rippleAnimate').addEventListener('change', e => {
+                this.rippleAnimate = e.target.checked;
             });
             document.getElementById('showNormals').addEventListener('change', e => {
                 this.showNormals = e.target.checked; this.buildNormals();
@@ -1119,6 +1207,12 @@
 
         animate() {
             requestAnimationFrame(() => this.animate());
+            if (this.rippleAnimate && this.rippleAmpCm > 0) {
+                this.ripplePhaseDeg = (this.ripplePhaseDeg + 4) % 360;
+                const el = document.getElementById('ripplePhase');
+                if (el) el.value = this.ripplePhaseDeg;
+                this.rebuildTubes();   // tubes only, for speed (ribs stay put)
+            }
             this.controls.update();
             this.renderer.render(this.scene, this.camera);
         }
