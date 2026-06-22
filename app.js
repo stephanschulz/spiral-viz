@@ -9,14 +9,15 @@ class SpiralVisualizer {
         this.wallHeight = 3.0;
 
         // Spiral parameters (GUI units)
-        this.startAngle = 0;        // degrees - inner starting angle
-        this.innerDiameter = 200;   // mm - minimum inner diameter
-        this.spiralSpacing = 22;    // mm gap between tube edges
-        this.tubeDiameter = 22;     // mm
+        this.startAngle = 120;      // degrees - matches inner-tube tail in dots.png
+        this.innerDiameter = 186;   // mm (derived from 5 inner turns × 5 m, see README)
+        this.spiralSpacing = 26;    // mm tube pitch (center-to-center between windings)
+        this.tubeDiameter = 16;     // mm tube width (visual only — does not affect spiral pitch)
+        this.reverseWinding = false; // photo shows CCW winding outward
 
         // Segment parameters
-        this.segmentLength = 200;   // cm per segment
-        this.segmentMounts = 75;    // desired LED tube amount (segments)
+        this.segmentLength = 500;   // cm per segment
+        this.segmentMounts = 31;    // desired LED tube amount (segments)
         this.segmentGap = 0;        // mm gap between segments
 
         // LED parameters (user sets LEDs/m; pitch derived)
@@ -34,6 +35,7 @@ class SpiralVisualizer {
         this.showGrid = true;
         this.showWallBorder = true;
         this.showImage = false;     // image behind spiral, visible only in LED circles
+        this.showSegmentEnds = true;
 
         this.backgroundImage = null;
         this.backgroundImageData = null;
@@ -47,6 +49,7 @@ class SpiralVisualizer {
         this.isPanning = false;
         this.panStartX = 0;
         this.panStartY = 0;
+        this.hoverSegment = -1;     // index of segment under the mouse, -1 = none
 
         // Computed spiral data
         this.curvePoints = [];
@@ -85,18 +88,80 @@ class SpiralVisualizer {
 
     get ledPitch() { return 1000 / this.ledsPerMeter; }  // mm, derived from LEDs/m
 
+    getSegmentEndPositions() {
+        return this.segments.map(seg => this.curvePoints[seg.endIdx]);
+    }
+
+    computeSegmentEndsFast(params) {
+        const {
+            startAngle, innerDiameter, spiralSpacing, tubeDiameter,
+            segmentLength, segmentMounts, segmentGap, reverseWinding
+        } = params;
+        const pitchM = spiralSpacing / 1000;
+        const b = pitchM / (2 * Math.PI);
+        const segLenM = segmentLength / 100;
+        const segGapM = (segmentGap ?? 0) / 1000;
+        const desiredSegments = Math.max(1, Math.round(segmentMounts || 1));
+        const innerRadiusM = (innerDiameter / 1000) / 2;
+        const theta0 = innerRadiusM > 0 ? innerRadiusM / b : 0;
+        const windDir = reverseWinding ? -1 : 1;
+        const startRad = startAngle * Math.PI / 180;
+        const ends = [];
+        let theta = theta0;
+        let segAccum = 0;
+        let inGap = false;
+        let gapAccum = 0;
+        const spiralXY = (th) => {
+            const r = b * th;
+            const phi = startRad + windDir * (th - theta0);
+            return { x: r * Math.cos(phi), y: r * Math.sin(phi) };
+        };
+        let safety = 0;
+        while (ends.length < desiredSegments && safety < 3_000_000) {
+            safety++;
+            const r = b * theta;
+            let dTheta = r > 0.001 ? 0.02 / r : 0.05;
+            dTheta = Math.min(Math.max(dTheta, 0.001), 0.05);
+            const nextTheta = theta + dTheta;
+            const dr = b * nextTheta - r;
+            const ds = Math.sqrt(dr * dr + (r * dTheta) * (r * dTheta));
+
+            if (inGap) {
+                gapAccum += ds;
+                if (gapAccum >= segGapM) {
+                    inGap = false;
+                    segAccum = 0;
+                }
+            } else {
+                segAccum += ds;
+                if (segAccum >= segLenM) {
+                    ends.push(spiralXY(nextTheta));
+                    if (ends.length >= desiredSegments) break;
+                    if (segGapM > 0) {
+                        inGap = true;
+                        gapAccum = 0;
+                    } else {
+                        segAccum = 0;
+                    }
+                }
+            }
+            theta = nextTheta;
+        }
+        return ends;
+    }
+
     // Settings keys: sliders + checkboxes that should be saved/loaded
     get settingsKeys() {
         return {
             sliders: ['wallWidth', 'wallHeight', 'startAngle', 'innerDiameter',
                        'spiralSpacing', 'tubeDiameter', 'segmentMounts', 'segmentLength', 'segmentGap',
                        'ledsPerMeter', 'pixelsPerMeter', 'wattsPerMeter', 'gridSize'],
-            checkboxes: ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage']
+            checkboxes: ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage', 'reverseWinding', 'showSegmentEnds']
         };
     }
 
     saveSettings() {
-        const data = {};
+        const data = { __version: 4 };
         for (const id of this.settingsKeys.sliders) {
             data[id] = this[id];
         }
@@ -110,10 +175,21 @@ class SpiralVisualizer {
         const raw = localStorage.getItem('spiralVizSettings');
         if (!raw) return;
         try {
+            const probe = JSON.parse(raw);
+            // Pre-v4 stored spiralSpacing as a gap (tube-edge to tube-edge); v4 stores it as pitch (center-to-center).
+            if (!probe || probe.__version === undefined || probe.__version < 4) {
+                localStorage.removeItem('spiralVizSettings');
+                return;
+            }
+        } catch (e) {
+            localStorage.removeItem('spiralVizSettings');
+            return;
+        }
+        try {
             const data = JSON.parse(raw);
             const sliderDecimals = {
                 wallWidth: 1, wallHeight: 1, startAngle: 0, innerDiameter: 0,
-                spiralSpacing: 0, tubeDiameter: 0, segmentMounts: 0, segmentLength: 0, segmentGap: 0,
+                spiralSpacing: 1, tubeDiameter: 0, segmentMounts: 0, segmentLength: 0, segmentGap: 0,
                 ledsPerMeter: 1, pixelsPerMeter: 0, wattsPerMeter: 1, gridSize: 1,
             };
             if (data.segmentMounts === undefined && data.targetSegments !== undefined) {
@@ -121,6 +197,15 @@ class SpiralVisualizer {
             }
             if (data.ledPitch !== undefined && data.ledsPerMeter === undefined) {
                 data.ledsPerMeter = 1000 / parseFloat(data.ledPitch);
+            }
+            if (data.showSegmentStarts !== undefined && data.showSegmentEnds === undefined) {
+                data.showSegmentEnds = data.showSegmentStarts;
+            }
+            if (data.tubeDiameter !== undefined && data.tubeDiameter > 50) {
+                data.tubeDiameter = data.tubeDiameter / 10; // legacy 160 mm → 16 mm
+            }
+            if (data.innerDiameter !== undefined && (data.innerDiameter === 300 || data.innerDiameter === 170)) {
+                data.innerDiameter = 186; // updated from spiral analysis
             }
             for (const id of this.settingsKeys.sliders) {
                 if (data[id] !== undefined) {
@@ -143,6 +228,7 @@ class SpiralVisualizer {
                     if (el) el.checked = this[id];
                 }
             }
+            this.updateReverseWindingButton();
         } catch (e) {
             // ignore corrupt data
         }
@@ -154,7 +240,7 @@ class SpiralVisualizer {
             wallHeight:     { decimals: 1 },
             startAngle:     { decimals: 0 },
             innerDiameter:  { decimals: 0 },
-            spiralSpacing:  { decimals: 0 },
+            spiralSpacing:  { decimals: 1 },
             tubeDiameter:   { decimals: 0 },
             segmentMounts:  { decimals: 0 },
             segmentLength:  { decimals: 0 },
@@ -193,7 +279,7 @@ class SpiralVisualizer {
             el.addEventListener(isNumber ? 'change' : 'input', handler);
         });
 
-        ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage'].forEach(id => {
+        ['showLeds', 'showTube', 'showPixelGroups', 'showGrid', 'showWallBorder', 'showImage', 'showSegmentEnds'].forEach(id => {
             const el = document.getElementById(id);
             el.addEventListener('change', () => {
                 this[id] = el.checked;
@@ -215,6 +301,15 @@ class SpiralVisualizer {
                 e.preventDefault();
             }, { passive: false });
         }
+
+        const ccwWindingEl = document.getElementById('ccwWinding');
+        ccwWindingEl.addEventListener('change', () => {
+            this.reverseWinding = !ccwWindingEl.checked;
+            this.updateReverseWindingButton();
+            this.computeSpiral();
+            this.draw();
+        });
+        this.updateReverseWindingButton();
 
         document.getElementById('resetViewBtn').addEventListener('click', () => {
             this.scale = 1;
@@ -247,6 +342,7 @@ class SpiralVisualizer {
         this.canvas.addEventListener('mouseleave', () => {
             this.isPanning = false;
             this.tooltip.style.display = 'none';
+            this.setHoverSegment(-1);
         });
         this.canvas.addEventListener('wheel', e => {
             e.preventDefault();
@@ -259,6 +355,12 @@ class SpiralVisualizer {
             this.scale *= zoomFactor;
             this.draw();
         }, { passive: false });
+    }
+
+    updateReverseWindingButton() {
+        const el = document.getElementById('ccwWinding');
+        if (!el) return;
+        el.checked = !this.reverseWinding;
     }
 
     resizeCanvas() {
@@ -298,20 +400,23 @@ class SpiralVisualizer {
 
     computeSpiral() {
         // Archimedean spiral: r = r0 + b * (theta - theta0)
-        // where r0 = inner radius, theta0 = start angle
-        const gapM = this.spiralSpacing / 1000;
-        const tubeDiamM = this.tubeDiameter / 1000;
-        const centerToCenter = gapM + tubeDiamM;
+        // where r0 = inner radius, theta0 = start angle.
+        // Spiral pitch is set directly via spiralSpacing (center-to-center mm); tube width is visual only.
+        const pitchM = this.spiralSpacing / 1000;
         const segLenM = this.segmentLength / 100;
         const desiredSegments = Math.max(1, Math.round(this.segmentMounts || 1));
         const segGapM = this.segmentGap / 1000;
-        const b = centerToCenter / (2 * Math.PI);
+        const b = pitchM / (2 * Math.PI);
+        const windDir = this.reverseWinding ? -1 : 1;
 
         const innerRadiusM = (this.innerDiameter / 1000) / 2;
         const startThetaRad = this.startAngle * Math.PI / 180;
-        // theta0 such that r(theta0) = innerRadiusM: theta0 = innerRadiusM / b
-        // but we also want the spiral to visually start at startAngle
         const theta0 = innerRadiusM > 0 ? innerRadiusM / b : 0;
+
+        const spiralXY = (theta, r) => {
+            const phi = startThetaRad + windDir * (theta - theta0);
+            return { x: r * Math.cos(phi), y: r * Math.sin(phi), phi };
+        };
 
         this.curvePoints = [];
         this.segments = [];  // [{startIdx, endIdx}, ...] - only tube regions
@@ -324,14 +429,15 @@ class SpiralVisualizer {
         let curSegStart = 0;
         const targetStep = 0.002;
 
-        // First point
+        // First point (theta always increases outward; windDir flips rotation only)
         const r0 = b * theta;
-        const angleOffset = startThetaRad - theta0;
+        const p0 = spiralXY(theta, r0);
         this.curvePoints.push({
-            x: r0 * Math.cos(theta + angleOffset),
-            y: r0 * Math.sin(theta + angleOffset),
+            x: p0.x,
+            y: p0.y,
             theta: theta,
-            r: r0
+            r: r0,
+            phi: p0.phi
         });
 
         let safetyIter = 0;
@@ -354,8 +460,9 @@ class SpiralVisualizer {
             const dr = rNext - r;
             const ds = Math.sqrt(dr * dr + (r * dTheta) * (r * dTheta));
 
-            const x = rNext * Math.cos(nextTheta + angleOffset);
-            const y = rNext * Math.sin(nextTheta + angleOffset);
+            const pNext = spiralXY(nextTheta, rNext);
+            const x = pNext.x;
+            const y = pNext.y;
 
             if (inGap) {
                 gapAccum += ds;
@@ -363,14 +470,14 @@ class SpiralVisualizer {
                     // Gap ended - start new segment from this point
                     inGap = false;
                     segAccum = 0;
-                    this.curvePoints.push({ x, y, theta: nextTheta, r: rNext });
+                    this.curvePoints.push({ x, y, theta: nextTheta, r: rNext, phi: pNext.phi });
                     curSegStart = this.curvePoints.length - 1;
                 }
                 // Don't add points during the gap - they are skipped
             } else {
                 totalLength += ds;
                 segAccum += ds;
-                this.curvePoints.push({ x, y, theta: nextTheta, r: rNext });
+                this.curvePoints.push({ x, y, theta: nextTheta, r: rNext, phi: pNext.phi });
 
                 if (segAccum >= segLenM) {
                     // End this segment
@@ -486,6 +593,26 @@ class SpiralVisualizer {
         this.drawGrid();
         this.drawWall();
         this.drawSpiral();
+        if (this.showSegmentEnds) this.drawSegmentEndMarkers();
+    }
+
+    drawSegmentEndMarkers() {
+        const ends = this.getSegmentEndPositions();
+        if (!ends.length) return;
+        const ctx = this.ctx;
+        const r = Math.max(3, this.worldScale(0.02));
+        ctx.save();
+        for (const p of ends) {
+            const c = this.worldToCanvas(p.x, p.y);
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(40, 200, 80, 0.95)';
+            ctx.fill();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+        ctx.restore();
     }
 
     drawImageToWall() {
@@ -777,6 +904,29 @@ class SpiralVisualizer {
         // Draw each segment as an independent tube piece
         for (let s = 0; s < this.segments.length; s++) {
             const { startIdx: i0, endIdx: i1 } = this.segments[s];
+            const isHovered = s === this.hoverSegment;
+
+            if (isHovered) {
+                // Highlight the hovered segment so its footprint is obvious,
+                // even when the tube layer is hidden.
+                ctx.beginPath();
+                let hp = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
+                ctx.moveTo(hp.x, hp.y);
+                for (let i = i0 + 1; i <= i1; i++) {
+                    hp = this.worldToCanvas(outerPts[i].x, outerPts[i].y);
+                    ctx.lineTo(hp.x, hp.y);
+                }
+                for (let i = i1; i >= i0; i--) {
+                    hp = this.worldToCanvas(innerPts[i].x, innerPts[i].y);
+                    ctx.lineTo(hp.x, hp.y);
+                }
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(255, 170, 0, 0.55)';
+                ctx.fill();
+                ctx.strokeStyle = '#ff8c00';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
 
             if (this.showTube) {
                 // Fill tube body
@@ -818,31 +968,21 @@ class SpiralVisualizer {
                 ctx.strokeStyle = '#2266cc';
                 ctx.lineWidth = 1.5;
                 ctx.stroke();
-
-                // End caps: perpendicular lines at start and end of each segment
-                const isFirst = (s === 0);
-                const isLast = (s === this.segments.length - 1);
-
-                // Start cap
-                const ps = this.worldToCanvas(outerPts[i0].x, outerPts[i0].y);
-                const pe = this.worldToCanvas(innerPts[i0].x, innerPts[i0].y);
-                ctx.beginPath();
-                ctx.moveTo(ps.x, ps.y);
-                ctx.lineTo(pe.x, pe.y);
-                ctx.strokeStyle = isFirst ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
-                ctx.lineWidth = isFirst ? 3 : 1.5;
-                ctx.stroke();
-
-                // End cap
-                const ps2 = this.worldToCanvas(outerPts[i1].x, outerPts[i1].y);
-                const pe2 = this.worldToCanvas(innerPts[i1].x, innerPts[i1].y);
-                ctx.beginPath();
-                ctx.moveTo(ps2.x, ps2.y);
-                ctx.lineTo(pe2.x, pe2.y);
-                ctx.strokeStyle = isLast ? 'rgba(220, 50, 50, 0.9)' : 'rgba(255, 100, 50, 0.7)';
-                ctx.lineWidth = isLast ? 3 : 1.5;
-                ctx.stroke();
             }
+
+            // Start / end caps: black perpendicular borders at each segment boundary
+            const drawSegmentCap = (idx) => {
+                const pOuter = this.worldToCanvas(outerPts[idx].x, outerPts[idx].y);
+                const pInner = this.worldToCanvas(innerPts[idx].x, innerPts[idx].y);
+                ctx.beginPath();
+                ctx.moveTo(pOuter.x, pOuter.y);
+                ctx.lineTo(pInner.x, pInner.y);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+            };
+            drawSegmentCap(i0);
+            drawSegmentCap(i1);
 
             // Pixel-group arc segments (each pixel = short arc along tube)
             if (this.showPixelGroups && this.pixelsPerMeter > 0) {
@@ -980,10 +1120,10 @@ class SpiralVisualizer {
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
-        const step = Math.max(1, Math.floor(this.curvePoints.length / 500));
+        // Check every curve point so short segments aren't skipped.
         let minDist = Infinity;
         let closestIdx = -1;
-        for (let i = 0; i < this.curvePoints.length; i += step) {
+        for (let i = 0; i < this.curvePoints.length; i++) {
             const cp = this.worldToCanvas(this.curvePoints[i].x, this.curvePoints[i].y);
             const d = (cp.x - mx) ** 2 + (cp.y - my) ** 2;
             if (d < minDist) {
@@ -993,15 +1133,22 @@ class SpiralVisualizer {
         }
         minDist = Math.sqrt(minDist);
 
-        if (minDist < 30 && closestIdx >= 0) {
+        // Hit radius follows the tube's on-screen half-width (plus a small margin),
+        // so hovering anywhere on the tube registers at any zoom level.
+        const tubeRadiusM = (this.tubeDiameter / 1000) / 2;
+        const hitRadius = Math.max(12, this.worldScale(tubeRadiusM) + 6);
+
+        if (minDist < hitRadius && closestIdx >= 0) {
             const p = this.curvePoints[closestIdx];
-            let segNum = 0;
+            let segIdx = -1;
             for (let s = 0; s < this.segments.length; s++) {
                 if (closestIdx >= this.segments[s].startIdx && closestIdx <= this.segments[s].endIdx) {
-                    segNum = s + 1;
+                    segIdx = s;
                     break;
                 }
             }
+            const segNum = segIdx + 1;
+            this.setHoverSegment(segIdx);
             const frac = closestIdx / (this.curvePoints.length - 1);
             const cumLen = frac * this.spiralTotalLength;
 
@@ -1012,10 +1159,17 @@ class SpiralVisualizer {
                 `Segment: ${segNum} / ${this.spiralSegmentCount}\n` +
                 `Radius: ${(p.r * 100).toFixed(1)} cm\n` +
                 `Length to here: ${cumLen.toFixed(2)} m\n` +
-                `Angle: ${(p.theta * 180 / Math.PI).toFixed(1)}°`;
+                `Angle: ${((p.phi ?? p.theta) * 180 / Math.PI).toFixed(1)}°`;
         } else {
             this.tooltip.style.display = 'none';
+            this.setHoverSegment(-1);
         }
+    }
+
+    setHoverSegment(idx) {
+        if (idx === this.hoverSegment) return;
+        this.hoverSegment = idx;
+        this.draw();
     }
 }
 

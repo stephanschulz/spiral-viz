@@ -1,0 +1,26 @@
+{
+  "scalePxPerM": 792.2,
+  "spiralCenterPx": [
+    932.6,
+    918.3
+  ],
+  "imageRepresentsM": [
+    2.552,
+    2.58
+  ],
+  "pitchMm": 26.53,
+  "innerDiameterMm": 185.7,
+  "tubeWidthMm": 16,
+  "spiralSpacingMm": 10.5,
+  "startAngleDeg": 119.8,
+  "reverseWinding": false,
+  "turnsInner": 5.0,
+  "turnsTube2": 3.0,
+  "rmsMm": 164.0,
+  "spiralCenterOffsetMm": [
+    -98.9,
+    -131.0
+  ],
+  "segmentLengthCm": 500,
+  "segmentMounts": 31
+}

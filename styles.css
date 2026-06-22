@@ -96,6 +96,13 @@ body {
     border-bottom: 1px solid #e0e0e0;
 }
 
+.control-hint {
+    font-size: 11px;
+    color: #666;
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+
 .control-section:last-child {
     border-bottom: none;
 }
@@ -265,6 +272,17 @@ label:has(input[type="checkbox"]):hover {
 .btn-primary:hover {
     background-color: #0056b3;
     border-color: #0056b3;
+}
+
+.btn-active {
+    background-color: #333;
+    color: #fff;
+    border-color: #333;
+}
+
+.btn-active:hover {
+    background-color: #555;
+    border-color: #555;
 }
 
 /* Scrollbar Styling */
