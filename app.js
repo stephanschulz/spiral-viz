@@ -189,7 +189,7 @@ class SpiralVisualizer {
             const data = JSON.parse(raw);
             const sliderDecimals = {
                 wallWidth: 1, wallHeight: 1, startAngle: 0, innerDiameter: 0,
-                spiralSpacing: 1, tubeDiameter: 0, segmentMounts: 0, segmentLength: 0, segmentGap: 0,
+                spiralSpacing: 1, tubeDiameter: 0, segmentMounts: 0, segmentLength: 0, segmentGap: 1,
                 ledsPerMeter: 1, pixelsPerMeter: 0, wattsPerMeter: 1, gridSize: 1,
             };
             if (data.segmentMounts === undefined && data.targetSegments !== undefined) {
@@ -244,7 +244,7 @@ class SpiralVisualizer {
             tubeDiameter:   { decimals: 0 },
             segmentMounts:  { decimals: 0 },
             segmentLength:  { decimals: 0 },
-            segmentGap:     { decimals: 0 },
+            segmentGap:     { decimals: 1 },
             ledsPerMeter:   { decimals: 1 },
             pixelsPerMeter: { decimals: 0 },
             wattsPerMeter:  { decimals: 1 },

@@ -1,3 +1,11 @@
+- the guis for 2d and 3d need to use the same variables so that each shows the same spiral 
+
+
+- 2d 3d switch in each gui
+- minimize button for both guis
+- save gui settings button also in 3d gui
+i
+
 - define inner starting angle and inner min diameter to start from
 - define space between segments
 - list total pixel count, total segment use

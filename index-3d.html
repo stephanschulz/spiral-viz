@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spiral Visualizer — 3D</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { display: flex; overflow: hidden; background: #1a1d24; color: #e8e8e8; }
+
+        #panel {
+            width: 300px;
+            min-width: 300px;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 16px;
+            background: #23262e;
+            border-right: 1px solid #333;
+        }
+        #panel h1 { font-size: 18px; margin: 0; }
+        #panel a { color: #6db1ff; }
+
+        .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .mini-btn {
+            background: #2a2e37; border: 1px solid #3a3f4b; color: #e8e8e8;
+            border-radius: 4px; width: 26px; height: 26px; cursor: pointer; font-size: 12px;
+        }
+        .mini-btn:hover { background: #343945; }
+
+        .view-toggle { display: flex; margin-bottom: 14px; border: 1px solid #6db1ff; border-radius: 6px; overflow: hidden; }
+        .view-toggle a {
+            flex: 1; text-align: center; padding: 5px 0; font-size: 13px; font-weight: 600;
+            text-decoration: none; color: #6db1ff; background: transparent;
+        }
+        .view-toggle a.active { background: #6db1ff; color: #10131a; }
+
+        .btn3d {
+            width: 100%; padding: 8px; background: #2f6fd6; color: #fff; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 13px;
+        }
+        .btn3d:hover { background: #3f7fe6; }
+
+        .panel-restore-3d {
+            position: absolute; top: 12px; left: 12px; z-index: 50;
+            width: 36px; height: 36px; background: #23262e; color: #e8e8e8;
+            border: 1px solid #3a3f4b; border-radius: 6px; font-size: 18px; cursor: pointer; display: none;
+        }
+        body.minimized #panel { display: none; }
+        body.minimized .panel-restore-3d { display: block; }
+
+        .section { border-top: 1px solid #353944; padding: 12px 0; }
+        .section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #9aa0aa; margin: 0 0 10px; }
+        label.ctrl { display: block; font-size: 12px; margin-bottom: 12px; }
+        label.ctrl .val { float: right; color: #6db1ff; font-weight: 600; }
+        input[type=range] { width: 100%; margin-top: 4px; accent-color: #6db1ff; }
+        label.cb { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 8px; cursor: pointer; }
+
+        .profiles { display: flex; gap: 8px; }
+        .profile-opt {
+            flex: 1; border: 2px solid #3a3f4b; border-radius: 8px; padding: 6px;
+            cursor: pointer; text-align: center; background: #2a2e37; transition: border-color .15s;
+        }
+        .profile-opt.active { border-color: #6db1ff; }
+        .profile-opt img { width: 100%; height: 90px; object-fit: contain; background: #fff; border-radius: 4px; }
+        .profile-opt span { display: block; font-size: 11px; margin-top: 4px; color: #c4c8d0; }
+
+        #viewport { flex: 1; position: relative; }
+        #canvas3d { display: block; width: 100%; height: 100%; }
+        #info {
+            position: absolute; left: 12px; bottom: 12px; font-size: 12px;
+            background: rgba(20,22,28,0.8); padding: 8px 12px; border-radius: 6px; line-height: 1.5;
+        }
+        #info b { color: #ffd54a; }
+        #hint {
+            position: absolute; right: 12px; top: 12px; font-size: 11px; color: #9aa0aa;
+            background: rgba(20,22,28,0.8); padding: 6px 10px; border-radius: 6px;
+        }
+        #ribDraw {
+            position: absolute; right: 12px; bottom: 12px;
+            background: rgba(20,22,28,0.92); border: 1px solid #353944;
+            border-radius: 8px; padding: 8px;
+        }
+        #ribDrawTitle { font-size: 11px; color: #9aa0aa; margin-bottom: 4px; }
+        #ribCanvas { display: block; width: 380px; height: 200px; background: #15171d; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="panel">
+        <div class="panel-head">
+            <h1>Spiral — 3D</h1>
+            <button class="mini-btn" id="minimizeBtn3d" title="Minimize panel">⟨⟨</button>
+        </div>
+        <div class="view-toggle">
+            <a href="index.html">2D</a>
+            <a href="index-3d.html" class="active">3D</a>
+        </div>
+
+        <div class="section">
+            <h3>LED Tube Profile</h3>
+            <div class="profiles">
+                <div class="profile-opt active" data-profile="current">
+                    <img src="profiles/current-profile.jpg" alt="current profile">
+                    <span>Current<br>16 × 25 mm</span>
+                </div>
+                <div class="profile-opt" data-profile="new">
+                    <img src="profiles/new-profile.jpg" alt="new profile">
+                    <span>New<br>4 × 12 mm</span>
+                </div>
+            </div>
+            <label class="ctrl" style="margin-top:10px;">Profile Scale <span class="val" id="profileScaleVal">1.0×</span>
+                <input type="range" id="profileScale" min="0.5" max="3" step="0.1" value="1">
+            </label>
+        </div>
+
+        <div class="section">
+            <h3>Curvature</h3>
+            <label class="ctrl">Concave Curvature — edge rise <span class="val" id="curvatureVal">0 cm</span>
+                <input type="range" id="curvature" min="0" max="100" step="1" value="0">
+            </label>
+        </div>
+
+        <div class="section">
+            <h3>Spiral Geometry</h3>
+            <label class="ctrl">Start Angle <span class="val" id="startAngleVal">120°</span>
+                <input type="range" id="startAngle" min="0" max="360" step="1" value="120">
+            </label>
+            <label class="ctrl">Inner Diameter <span class="val" id="innerDiameterVal">186 mm</span>
+                <input type="range" id="innerDiameter" min="0" max="500" step="2" value="186">
+            </label>
+            <label class="ctrl">Tube Pitch (center-to-center) <span class="val" id="spiralSpacingVal">26.0 mm</span>
+                <input type="range" id="spiralSpacing" min="5" max="120" step="0.5" value="26">
+            </label>
+            <label class="cb"><input type="checkbox" id="ccwWinding" checked> CCW winding</label>
+        </div>
+
+        <div class="section">
+            <h3>Segments</h3>
+            <label class="ctrl">Segment Count <span class="val" id="segmentMountsVal">31</span>
+                <input type="range" id="segmentMounts" min="1" max="80" step="1" value="31">
+            </label>
+            <label class="ctrl">Segment Length <span class="val" id="segmentLengthVal">500 cm</span>
+                <input type="range" id="segmentLength" min="10" max="1000" step="5" value="500">
+            </label>
+            <label class="ctrl">Segment Gap <span class="val" id="segmentGapVal">0.0 mm</span>
+                <input type="range" id="segmentGap" min="0" max="5" step="0.5" value="0">
+            </label>
+        </div>
+
+        <div class="section">
+            <h3>Support Ribs</h3>
+            <label class="cb"><input type="checkbox" id="showRibs" checked> Show ribs (click-in)</label>
+            <label class="ctrl">Rib Count <span class="val" id="ribCountVal">15</span>
+                <input type="range" id="ribCount" min="0" max="60" step="1" value="15">
+            </label>
+            <label class="ctrl">Rib Thickness <span class="val" id="ribThicknessVal">2.0 mm</span>
+                <input type="range" id="ribThickness" min="1" max="10" step="0.5" value="2">
+            </label>
+        </div>
+
+        <div class="section">
+            <h3>Display</h3>
+            <label class="cb"><input type="checkbox" id="showGrid" checked> Wall grid</label>
+            <label class="cb"><input type="checkbox" id="showSegColors" checked> Color segments</label>
+        </div>
+
+        <div class="section">
+            <h3>Settings</h3>
+            <button class="btn3d" id="saveSettings3d">Save Settings</button>
+        </div>
+    </div>
+
+    <div id="viewport">
+        <canvas id="canvas3d"></canvas>
+        <button class="panel-restore-3d" id="panelRestore3d" title="Show controls">☰</button>
+        <div id="hint">drag = orbit · scroll = zoom · right-drag = pan</div>
+        <div id="info">
+            Spiral Length: <b id="lenInfo">--</b> ·
+            Turns: <b id="turnInfo">--</b> ·
+            Segments: <b id="segInfo">--</b>
+        </div>
+        <div id="ribDraw">
+            <div id="ribDrawTitle">Single rib — construction (6 o'clock)</div>
+            <canvas id="ribCanvas"></canvas>
+        </div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ---------- LED tube profiles (cross-section outline, in mm) ----------
+    // u = lateral offset from path centerline, v = height above mounting surface.
+    function keyholeProfile() {
+        // current-profile.jpg: ~12 mm base, ~16 mm bulb, 25 mm tall.
+        const baseHalf = 6, bulbR = 8, bulbCy = 17;
+        const yMeet = bulbCy - Math.sqrt(bulbR * bulbR - baseHalf * baseHalf); // base meets bulb
+        const pts = [];
+        pts.push({ u: baseHalf, v: 0 });
+        pts.push({ u: baseHalf, v: yMeet });
+        const a0 = Math.atan2(yMeet - bulbCy, baseHalf);       // lower-right
+        const a1 = Math.PI - a0;                                // lower-left (mirror), going over the top
+        const steps = 28;
+        for (let i = 1; i <= steps; i++) {
+            const a = a0 + (a1 - a0) * (i / steps);
+            pts.push({ u: bulbR * Math.cos(a), v: bulbCy + bulbR * Math.sin(a) });
+        }
+        pts.push({ u: -baseHalf, v: yMeet });
+        pts.push({ u: -baseHalf, v: 0 });
+        return pts;
+    }
+
+    function roundBarProfile() {
+        // new-profile.jpg: 4 mm wide, 12 mm tall, round emitter cap on top.
+        const half = 2, straight = 10, capR = 2, capCy = 10;
+        const pts = [];
+        pts.push({ u: half, v: 0 });
+        pts.push({ u: half, v: straight });
+        const steps = 18;
+        for (let i = 1; i <= steps; i++) {
+            const a = (Math.PI) * (i / steps); // 0 .. PI over the top (right -> left)
+            pts.push({ u: capR * Math.cos(a), v: capCy + capR * Math.sin(a) });
+        }
+        pts.push({ u: -half, v: straight });
+        pts.push({ u: -half, v: 0 });
+        return pts;
+    }
+
+    const PROFILES = { current: keyholeProfile(), new: roundBarProfile() };
+
+    // ---------- App ----------
+    class SpiralViz3D {
+        constructor() {
+            this.canvas = document.getElementById('canvas3d');
+
+            // params (same defaults as the 2D view, GUI units)
+            this.startAngle = 120;       // deg
+            this.innerDiameter = 186;    // mm
+            this.spiralSpacing = 26;     // mm pitch
+            this.reverseWinding = false; // false = CCW
+            this.segmentLength = 500;    // cm
+            this.segmentMounts = 31;     // count
+            this.segmentGap = 0;         // mm
+            this.profileKey = 'current';
+            this.profileScale = 1;
+            this.curvatureCm = 0;        // edge rise in cm (0 = flat)
+            this.showGrid = true;
+            this.showSegColors = true;
+
+            // Support ribs
+            this.showRibs = true;
+            this.ribCount = 15;
+            this.ribThickness = 2;       // mm
+            this.baseStandoff = 0.004;   // m — uniform lift of tubes off the wall
+            this.ribStartAngle = -Math.PI / 2; // first rib at 6 o'clock (straight down)
+
+            this.rMax = 1;
+            this.spiralMeta = null;
+            this.tubeGroup = new THREE.Group();
+            this.ribGroup = new THREE.Group();
+
+            this.initScene();
+            this.initRibCanvas();
+            this.loadSettings();
+            this.initControls();
+            this.rebuild();
+            this.frameCamera();
+            this.animate();
+            window.addEventListener('resize', () => this.onResize());
+        }
+
+        initScene() {
+            this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            this.scene = new THREE.Scene();
+            this.scene.background = new THREE.Color(0x1a1d24);
+
+            // Wall mount: the wall is the XY plane (z = 0), the spiral is drawn on it,
+            // and the tubes (plus any concave curvature) extend toward the viewer in +Z.
+            // World up is Y so the spiral stands upright like on a wall.
+            this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+            this.camera.up.set(0, 1, 0);
+
+            this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+            const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+            dir.position.set(2, -3, 4);
+            this.scene.add(dir);
+            const dir2 = new THREE.DirectionalLight(0x88aaff, 0.35);
+            dir2.position.set(-3, 2, 2);
+            this.scene.add(dir2);
+
+            // Grid stands in for the wall: vertical, in the XY plane at z = 0.
+            this.grid = new THREE.GridHelper(6, 30, 0x44505f, 0x2c333d);
+            this.grid.rotation.x = Math.PI / 2; // GridHelper is XZ by default → put it in XY (wall)
+            this.scene.add(this.grid);
+
+            this.scene.add(new THREE.AxesHelper(0.3));
+            this.scene.add(this.tubeGroup);
+            this.scene.add(this.ribGroup);
+
+            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+            this.controls.enableDamping = true;
+            this.controls.dampingFactor = 0.08;
+            // Unrestricted orbit: full turn around, and top-to-bottom, so every side
+            // (front, back, edges) of the wall-mounted spiral is reachable.
+            this.controls.minPolarAngle = 0;
+            this.controls.maxPolarAngle = Math.PI;
+            this.controls.minAzimuthAngle = -Infinity;
+            this.controls.maxAzimuthAngle = Infinity;
+            this.controls.minDistance = 0.05;
+            this.controls.maxDistance = 50;
+            this.onResize();
+        }
+
+        // ---------- Centerline + segments (mirrors the 2D computeSpiral, coarser step) ----------
+        computeCenterline() {
+            const pitchM = this.spiralSpacing / 1000;
+            const segLenM = this.segmentLength / 100;
+            const desiredSegments = Math.max(1, Math.round(this.segmentMounts || 1));
+            const segGapM = this.segmentGap / 1000;
+            const b = pitchM / (2 * Math.PI);
+            const windDir = this.reverseWinding ? -1 : 1;
+            const innerRadiusM = (this.innerDiameter / 1000) / 2;
+            const startThetaRad = this.startAngle * Math.PI / 180;
+            const theta0 = b > 0 && innerRadiusM > 0 ? innerRadiusM / b : 0;
+            const targetStep = 0.01; // 1 cm resampling — plenty for 3D
+
+            const spiralXY = (theta) => {
+                const r = b * theta;
+                const phi = startThetaRad + windDir * (theta - theta0);
+                return { x: r * Math.cos(phi), y: r * Math.sin(phi), r };
+            };
+
+            const points = [];   // {x,y,r}
+            const segments = [];  // {start,end} indices into points
+            let theta = theta0;
+            let totalLength = 0, segAccum = 0, gapAccum = 0;
+            let inGap = false, curSegStart = 0;
+            let rMax = innerRadiusM;
+
+            const first = spiralXY(theta);
+            points.push(first);
+            rMax = Math.max(rMax, first.r);
+
+            let iter = 0;
+            const maxIter = 2000000;
+            while (segments.length < desiredSegments && iter < maxIter) {
+                iter++;
+                const r = b * theta;
+                let dTheta = r < 0.001 ? 0.05 : Math.min(0.05, Math.max(0.001, targetStep / r));
+                const nextTheta = theta + dTheta;
+                const rNext = b * nextTheta;
+                const dr = rNext - r;
+                const ds = Math.sqrt(dr * dr + (r * dTheta) * (r * dTheta));
+                const p = spiralXY(nextTheta);
+
+                if (inGap) {
+                    gapAccum += ds;
+                    if (gapAccum >= segGapM) {
+                        inGap = false; segAccum = 0;
+                        points.push(p); rMax = Math.max(rMax, p.r);
+                        curSegStart = points.length - 1;
+                    }
+                } else {
+                    totalLength += ds; segAccum += ds;
+                    points.push(p); rMax = Math.max(rMax, p.r);
+                    if (segAccum >= segLenM) {
+                        segments.push({ start: curSegStart, end: points.length - 1 });
+                        if (segments.length >= desiredSegments) break;
+                        if (segGapM > 0) { inGap = true; gapAccum = 0; }
+                        else { segAccum = 0; curSegStart = points.length - 1; }
+                    }
+                }
+                theta = nextTheta;
+            }
+            if (segments.length < desiredSegments && !inGap) {
+                const last = points.length - 1;
+                if (last > curSegStart) segments.push({ start: curSegStart, end: last });
+            }
+
+            this.rMax = Math.max(rMax, 0.01);
+            this.totalLength = totalLength;
+            this.turns = (theta - theta0) / (2 * Math.PI);
+            // Saved so the ribs can find where each winding crosses a given azimuth.
+            this.spiralMeta = { b, theta0, thetaMax: theta, startThetaRad, windDir, rInner: innerRadiusM, rMax: this.rMax };
+            return { points, segments };
+        }
+
+        // Height of the mounting surface above the wall at radius r (tubes sit here).
+        surfaceZ(r) {
+            return this.baseStandoff + this.dishZ(r);
+        }
+
+        // z height of the concave dish at radius r
+        dishZ(r) {
+            const rise = this.curvatureCm / 100; // m at outer edge
+            if (rise === 0) return 0;
+            const f = r / this.rMax;
+            return rise * f * f;
+        }
+
+        // surface normal of the dish at (x,y,r), normalized
+        dishNormal(x, y, r) {
+            const rise = this.curvatureCm / 100;
+            if (rise === 0) return new THREE.Vector3(0, 0, 1);
+            // z = rise * (r/rMax)^2 = (rise/rMax^2)*(x^2+y^2) → grad = 2k*(x,y)
+            const k = rise / (this.rMax * this.rMax);
+            const n = new THREE.Vector3(-2 * k * x, -2 * k * y, 1);
+            return n.normalize();
+        }
+
+        buildSegmentMesh(points, seg, profile2D, material) {
+            const i0 = seg.start, i1 = seg.end;
+            const ringCount = i1 - i0 + 1;
+            if (ringCount < 2) return null;
+            const pn = profile2D.length;
+            const s = 0.001 * this.profileScale; // mm → m
+
+            // 3D positions of centerline points in this segment
+            const C = [];
+            for (let i = i0; i <= i1; i++) {
+                const p = points[i];
+                C.push(new THREE.Vector3(p.x, p.y, this.surfaceZ(p.r)));
+            }
+
+            // Tube frame: the tube's height axis U follows the dish surface normal, so
+            // every tube aims along the local normal — toward the dish's focal point.
+            // Width B stays tangent to the surface, perpendicular to the path.
+            const B = [], U = [];
+            const tmpT = new THREE.Vector3();
+            for (let i = 0; i < ringCount; i++) {
+                const a = C[Math.max(0, i - 1)], c = C[Math.min(ringCount - 1, i + 1)];
+                tmpT.copy(c).sub(a);
+                if (tmpT.lengthSq() < 1e-12) tmpT.set(1, 0, 0);
+                tmpT.normalize();
+                const gp = points[i0 + i];
+                const nSurf = this.dishNormal(gp.x, gp.y, gp.r);
+                const b = new THREE.Vector3().crossVectors(tmpT, nSurf).normalize();
+                const u = new THREE.Vector3().crossVectors(b, tmpT).normalize();
+                B.push(b); U.push(u);
+            }
+
+            const positions = [];
+            const vertIndex = (ring, j) => ring * pn + j;
+            // ring vertices
+            for (let i = 0; i < ringCount; i++) {
+                for (let j = 0; j < pn; j++) {
+                    const pp = profile2D[j];
+                    const v = new THREE.Vector3()
+                        .copy(C[i])
+                        .addScaledVector(B[i], pp.u * s)
+                        .addScaledVector(U[i], pp.v * s);
+                    positions.push(v.x, v.y, v.z);
+                }
+            }
+            const indices = [];
+            for (let i = 0; i < ringCount - 1; i++) {
+                for (let j = 0; j < pn; j++) {
+                    const jn = (j + 1) % pn;
+                    const a = vertIndex(i, j), b = vertIndex(i, jn);
+                    const c = vertIndex(i + 1, j), d = vertIndex(i + 1, jn);
+                    indices.push(a, c, b, b, c, d);
+                }
+            }
+            // end caps (fan from cross-section centroid)
+            let cu = 0, cv = 0;
+            for (const pp of profile2D) { cu += pp.u; cv += pp.v; }
+            cu /= pn; cv /= pn;
+            const addCap = (ring, flip) => {
+                const center = new THREE.Vector3()
+                    .copy(C[ring])
+                    .addScaledVector(B[ring], cu * s)
+                    .addScaledVector(U[ring], cv * s);
+                const ci = positions.length / 3;
+                positions.push(center.x, center.y, center.z);
+                for (let j = 0; j < pn; j++) {
+                    const jn = (j + 1) % pn;
+                    const a = vertIndex(ring, j), b = vertIndex(ring, jn);
+                    if (flip) indices.push(ci, b, a); else indices.push(ci, a, b);
+                }
+            };
+            addCap(0, false);
+            addCap(ringCount - 1, true);
+
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geom.setIndex(indices);
+            geom.computeVertexNormals();
+            return new THREE.Mesh(geom, material);
+        }
+
+        // Radii where the spiral crosses a given azimuth (one per turn).
+        ribCrossingRadii(phiRib) {
+            const m = this.spiralMeta;
+            const out = [];
+            const base = m.theta0 + m.windDir * (phiRib - m.startThetaRad);
+            const turns = Math.ceil((m.thetaMax - m.theta0) / (2 * Math.PI)) + 2;
+            for (let n = -2; n <= turns; n++) {
+                const theta = base + m.windDir * 2 * Math.PI * n;
+                if (theta < m.theta0 - 1e-9 || theta > m.thetaMax + 1e-9) continue;
+                out.push(m.b * theta);
+            }
+            return out;
+        }
+
+        // Flat rib profile (in r–z space) for the rib at azimuth `phi`.
+        // Shared by the 3D extrusion and the 2D construction drawing.
+        ribOutline(phi) {
+            const meta = this.spiralMeta;
+            if (!meta) return null;
+            const profile = PROFILES[this.profileKey];
+            const s = 0.001 * this.profileScale;
+            let tubeH = 0, umin = Infinity, umax = -Infinity;
+            for (const pp of profile) {
+                tubeH = Math.max(tubeH, pp.v);
+                if (pp.v <= 0.5) { umin = Math.min(umin, pp.u); umax = Math.max(umax, pp.u); }
+            }
+            const tubeHeightM = tubeH * s;
+            const baseWidthM = (umax - umin) * s;
+            const standProud = Math.max(0.004, tubeHeightM * 0.5);
+            const pitchM = this.spiralSpacing / 1000;
+            const notchHalf = Math.min(baseWidthM, pitchM * 0.7) / 2;
+            const rStart = meta.rInner, rEnd = meta.rMax;
+            const crossings = this.ribCrossingRadii(phi)
+                .filter(r => r > rStart + notchHalf && r < rEnd - notchHalf)
+                .sort((a, b) => a - b);
+
+            // Dish frame in the (r,z) meridian plane (= the rib's own plane).
+            // N is the surface normal; slots/teeth run along it so each held tube
+            // aims along N (toward the dish focal point).
+            const slopeAt = (r) => {
+                const e = 1e-4;
+                return (this.surfaceZ(r + e) - this.surfaceZ(r - e)) / (2 * e);
+            };
+            const frameAt = (r) => {
+                const sp = slopeAt(r), L = Math.hypot(1, sp);
+                return { P: [r, this.surfaceZ(r)], N: [-sp / L, 1 / L], Tm: [1 / L, sp / L], sp };
+            };
+            // clamp the tooth height along the normal so opposite slot walls never cross
+            const proudAt = (sp) => Math.min(standProud, 1.7 * notchHalf / Math.max(Math.abs(sp), 1e-3));
+            const topAlongN = (r) => {
+                const f = frameAt(r), pr = proudAt(f.sp);
+                return [f.P[0] + f.N[0] * pr, f.P[1] + f.N[1] * pr];
+            };
+
+            const teeth = [];                          // {r, P, N} for the 2D diagram
+            const top = [];                            // top edge, increasing r
+            top.push(topAlongN(rStart));
+            for (const rc of crossings) {
+                const f = frameAt(rc), pr = proudAt(f.sp);
+                const P = f.P, N = f.N, Tm = f.Tm;
+                const wLT = [P[0] + N[0] * pr - Tm[0] * notchHalf, P[1] + N[1] * pr - Tm[1] * notchHalf];
+                const wLB = [P[0] - Tm[0] * notchHalf, P[1] - Tm[1] * notchHalf];
+                const wRB = [P[0] + Tm[0] * notchHalf, P[1] + Tm[1] * notchHalf];
+                const wRT = [P[0] + N[0] * pr + Tm[0] * notchHalf, P[1] + N[1] * pr + Tm[1] * notchHalf];
+                top.push(wLT, wLB, wRB, wRT);          // down one wall, across floor, up the other
+                teeth.push({ r: rc, P, N });
+            }
+            top.push(topAlongN(rEnd));
+
+            const outline = [[rStart, 0], [rEnd, 0]];  // bottom edge on the wall
+            for (let i = top.length - 1; i >= 0; i--) outline.push(top[i]); // outer edge + top
+            outline.push([rStart, 0]);                 // inner edge down → close
+
+            return { outline, crossings, teeth, notchHalf, standProud, rStart, rEnd, pitchM, frameAt };
+        }
+
+        buildRibs() {
+            while (this.ribGroup.children.length) {
+                const r = this.ribGroup.children.pop();
+                r.geometry?.dispose();
+            }
+            this.drawRibDrawing();           // keep the 2D diagram in sync
+            if (!this.showRibs || this.ribCount < 1 || !this.spiralMeta) return;
+
+            const thicknessM = this.ribThickness / 1000;
+            const ribMat = new THREE.MeshStandardMaterial({
+                color: 0x9aa3b0, roughness: 0.8, metalness: 0.0, side: THREE.DoubleSide
+            });
+
+            for (let k = 0; k < this.ribCount; k++) {
+                const phi = this.ribStartAngle + (k / this.ribCount) * Math.PI * 2;
+                const data = this.ribOutline(phi);
+                if (!data) continue;
+                const o = data.outline;
+                const shape = new THREE.Shape();
+                shape.moveTo(o[0][0], o[0][1]);
+                for (let i = 1; i < o.length; i++) shape.lineTo(o[i][0], o[i][1]);
+
+                const geom = new THREE.ExtrudeGeometry(shape, { depth: thicknessM, bevelEnabled: false });
+                geom.translate(0, 0, -thicknessM / 2);  // center the 2 mm thickness on the rib plane
+                const mesh = new THREE.Mesh(geom, ribMat);
+                // Place: local X → radial, local Y → world Z (up), local Z → tangential (thickness)
+                const basis = new THREE.Matrix4().makeBasis(
+                    new THREE.Vector3(Math.cos(phi), Math.sin(phi), 0),
+                    new THREE.Vector3(0, 0, 1),
+                    new THREE.Vector3(-Math.sin(phi), Math.cos(phi), 0)
+                );
+                mesh.applyMatrix4(basis);
+                this.ribGroup.add(mesh);
+            }
+        }
+
+        initRibCanvas() {
+            const canvas = document.getElementById('ribCanvas');
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            this.ribDrawW = 380; this.ribDrawH = 200;
+            canvas.width = this.ribDrawW * dpr;
+            canvas.height = this.ribDrawH * dpr;
+            this.ribCtx = canvas.getContext('2d');
+            this.ribCtx.scale(dpr, dpr);
+        }
+
+        // 2D construction drawing of a single rib (the 6 o'clock one), shown to TRUE
+        // scale so the teeth — and the direction each held tube aims — are honest.
+        drawRibDrawing() {
+            const ctx = this.ribCtx;
+            if (!ctx) return;
+            const W = this.ribDrawW, H = this.ribDrawH;
+            ctx.clearRect(0, 0, W, H);
+            const data = this.ribOutline(this.ribStartAngle);
+            if (!data || data.outline.length < 3) return;
+
+            const mm = (m) => m * 1000;
+            const aimLen = Math.max(0.03, data.standProud * 2.5); // length of the aim arrows
+
+            // bounding box over the rib outline + the tube-aim arrows (equal aspect)
+            let rMin = Infinity, rMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+            const grow = (x, z) => {
+                rMin = Math.min(rMin, x); rMax = Math.max(rMax, x);
+                zMin = Math.min(zMin, z); zMax = Math.max(zMax, z);
+            };
+            for (const p of data.outline) grow(p[0], p[1]);
+            for (const t of data.teeth) grow(t.P[0] + t.N[0] * aimLen, t.P[1] + t.N[1] * aimLen);
+
+            const mL = 14, mR = 14, mTop = 30, mBot = 16;
+            const spanR = Math.max(rMax - rMin, 1e-4), spanZ = Math.max(zMax - zMin, 1e-4);
+            const scale = Math.min((W - mL - mR) / spanR, (H - mTop - mBot) / spanZ);
+            const offX = mL + ((W - mL - mR) - spanR * scale) / 2;
+            const offY = mTop + ((H - mTop - mBot) - spanZ * scale) / 2;
+            const cx = (r) => offX + (r - rMin) * scale;
+            const cy = (z) => offY + (zMax - z) * scale;   // z up
+
+            // summary
+            ctx.fillStyle = '#c4c8d0';
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(
+                `${data.teeth.length} teeth · pitch ${mm(data.pitchM).toFixed(1)} mm · ` +
+                `${mm(data.rEnd - data.rStart).toFixed(0)} mm wide`, mL, 13);
+            ctx.fillStyle = '#7f8794';
+            ctx.fillText('true scale · teeth aim along the dish normal', mL, 24);
+
+            // rib body
+            ctx.beginPath();
+            ctx.moveTo(cx(data.outline[0][0]), cy(data.outline[0][1]));
+            for (let i = 1; i < data.outline.length; i++) ctx.lineTo(cx(data.outline[i][0]), cy(data.outline[i][1]));
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(154,163,176,0.30)';
+            ctx.fill();
+            ctx.strokeStyle = '#aab2bf';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // tube aim arrows along the surface normal at each tooth (they fan toward
+            // the focal point as the dish curves)
+            ctx.strokeStyle = '#5fd0ff';
+            ctx.fillStyle = '#5fd0ff';
+            ctx.lineWidth = 1.3;
+            for (const t of data.teeth) {
+                const x1 = cx(t.P[0]), y1 = cy(t.P[1]);
+                const x2 = cx(t.P[0] + t.N[0] * aimLen), y2 = cy(t.P[1] + t.N[1] * aimLen);
+                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                const ah = 3, a = Math.atan2(y2 - y1, x2 - x1);
+                ctx.beginPath();
+                ctx.moveTo(x2, y2);
+                ctx.lineTo(x2 - ah * Math.cos(a - 0.4), y2 - ah * Math.sin(a - 0.4));
+                ctx.lineTo(x2 - ah * Math.cos(a + 0.4), y2 - ah * Math.sin(a + 0.4));
+                ctx.closePath(); ctx.fill();
+            }
+        }
+
+        rebuild() {
+            // clear old
+            while (this.tubeGroup.children.length) {
+                const m = this.tubeGroup.children.pop();
+                m.geometry?.dispose();
+            }
+            const { points, segments } = this.computeCenterline();
+            const profile = PROFILES[this.profileKey];
+
+            const matA = new THREE.MeshStandardMaterial({
+                color: 0xfff1b0, emissive: 0xffce4a, emissiveIntensity: 0.55,
+                roughness: 0.45, metalness: 0.0, side: THREE.DoubleSide
+            });
+            const matB = new THREE.MeshStandardMaterial({
+                color: 0xfff7d6, emissive: 0xffe07a, emissiveIntensity: 0.55,
+                roughness: 0.45, metalness: 0.0, side: THREE.DoubleSide
+            });
+
+            segments.forEach((seg, idx) => {
+                const mat = this.showSegColors ? (idx % 2 ? matB : matA) : matA;
+                const mesh = this.buildSegmentMesh(points, seg, profile, mat);
+                if (mesh) this.tubeGroup.add(mesh);
+            });
+
+            this.buildRibs();
+
+            document.getElementById('lenInfo').textContent = this.totalLength.toFixed(2) + ' m';
+            document.getElementById('turnInfo').textContent = this.turns.toFixed(1);
+            document.getElementById('segInfo').textContent = segments.length;
+        }
+
+        // ---------- Persistence ----------
+        saveSettings() {
+            const data = {
+                profileKey: this.profileKey,
+                profileScale: this.profileScale,
+                curvatureCm: this.curvatureCm,
+                startAngle: this.startAngle,
+                innerDiameter: this.innerDiameter,
+                spiralSpacing: this.spiralSpacing,
+                segmentMounts: this.segmentMounts,
+                segmentLength: this.segmentLength,
+                segmentGap: this.segmentGap,
+                reverseWinding: this.reverseWinding,
+                showGrid: this.showGrid,
+                showSegColors: this.showSegColors,
+                showRibs: this.showRibs,
+                ribCount: this.ribCount,
+                ribThickness: this.ribThickness,
+            };
+            localStorage.setItem('spiralViz3DSettings', JSON.stringify(data));
+        }
+
+        loadSettings() {
+            const raw = localStorage.getItem('spiralViz3DSettings');
+            if (!raw) return;
+            let d;
+            try { d = JSON.parse(raw); } catch (e) { return; }
+            if (!d) return;
+            // Set the slider DOM values; initControls() then syncs fields + labels from them.
+            const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+            setVal('profileScale', d.profileScale);
+            setVal('curvature', d.curvatureCm);
+            setVal('startAngle', d.startAngle);
+            setVal('innerDiameter', d.innerDiameter);
+            setVal('spiralSpacing', d.spiralSpacing);
+            setVal('segmentMounts', d.segmentMounts);
+            setVal('segmentLength', d.segmentLength);
+            setVal('segmentGap', d.segmentGap);
+            setVal('ribCount', d.ribCount);
+            setVal('ribThickness', d.ribThickness);
+            // Checkboxes / direct fields (no slider to sync them).
+            if (d.reverseWinding != null) {
+                this.reverseWinding = d.reverseWinding;
+                const cb = document.getElementById('ccwWinding'); if (cb) cb.checked = !d.reverseWinding;
+            }
+            if (d.showGrid != null) {
+                this.showGrid = d.showGrid;
+                const cb = document.getElementById('showGrid'); if (cb) cb.checked = d.showGrid;
+                if (this.grid) this.grid.visible = d.showGrid;
+            }
+            if (d.showSegColors != null) {
+                this.showSegColors = d.showSegColors;
+                const cb = document.getElementById('showSegColors'); if (cb) cb.checked = d.showSegColors;
+            }
+            if (d.showRibs != null) {
+                this.showRibs = d.showRibs;
+                const cb = document.getElementById('showRibs'); if (cb) cb.checked = d.showRibs;
+            }
+            if (d.profileKey) {
+                this.profileKey = d.profileKey;
+                document.querySelectorAll('.profile-opt').forEach(o =>
+                    o.classList.toggle('active', o.dataset.profile === d.profileKey));
+            }
+        }
+
+        frameCamera() {
+            // Front view of the wall (looking along -Z), slightly off-axis.
+            const d = this.rMax * 2.6;
+            this.camera.position.set(this.rMax * 0.25, this.rMax * 0.15, d);
+            this.controls.target.set(0, 0, 0);
+            this.camera.far = d * 6;
+            this.camera.updateProjectionMatrix();
+            this.controls.update();
+        }
+
+        // ---------- UI ----------
+        initControls() {
+            const slider = (id, fmt, set, apply) => {
+                apply = apply || (() => this.rebuild());
+                const el = document.getElementById(id);
+                const val = document.getElementById(id + 'Val');
+                const update = (run) => {
+                    const v = parseFloat(el.value);
+                    set(v);
+                    if (val) val.textContent = fmt(v);
+                    if (run) { apply(); }
+                };
+                el.addEventListener('input', () => update(true));
+                update(false);
+            };
+            slider('profileScale', v => v.toFixed(1) + '×', v => this.profileScale = v);
+            slider('curvature', v => v + ' cm', v => this.curvatureCm = v);
+            slider('startAngle', v => v + '°', v => this.startAngle = v);
+            slider('innerDiameter', v => v + ' mm', v => this.innerDiameter = v);
+            slider('spiralSpacing', v => v.toFixed(1) + ' mm', v => this.spiralSpacing = v);
+            slider('segmentMounts', v => String(v), v => this.segmentMounts = v);
+            slider('segmentLength', v => v + ' cm', v => this.segmentLength = v);
+            slider('segmentGap', v => v.toFixed(1) + ' mm', v => this.segmentGap = v);
+            // rib-only sliders rebuild just the ribs (cheap), not the tube mesh
+            slider('ribCount', v => String(v), v => this.ribCount = v, () => this.buildRibs());
+            slider('ribThickness', v => v.toFixed(1) + ' mm', v => this.ribThickness = v, () => this.buildRibs());
+
+            document.getElementById('ccwWinding').addEventListener('change', e => {
+                this.reverseWinding = !e.target.checked; this.rebuild();
+            });
+            document.getElementById('showGrid').addEventListener('change', e => {
+                this.showGrid = e.target.checked; this.grid.visible = this.showGrid;
+            });
+            document.getElementById('showSegColors').addEventListener('change', e => {
+                this.showSegColors = e.target.checked; this.rebuild();
+            });
+            document.getElementById('showRibs').addEventListener('change', e => {
+                this.showRibs = e.target.checked; this.buildRibs();
+            });
+
+            document.querySelectorAll('.profile-opt').forEach(opt => {
+                opt.addEventListener('click', () => {
+                    document.querySelectorAll('.profile-opt').forEach(o => o.classList.remove('active'));
+                    opt.classList.add('active');
+                    this.profileKey = opt.dataset.profile;
+                    this.rebuild();
+                });
+            });
+
+            // reframe when geometry size changes a lot
+            ['spiralSpacing', 'innerDiameter', 'segmentMounts', 'segmentLength'].forEach(id => {
+                document.getElementById(id).addEventListener('change', () => this.frameCamera());
+            });
+
+            document.getElementById('saveSettings3d').addEventListener('click', () => {
+                this.saveSettings();
+                const b = document.getElementById('saveSettings3d');
+                b.textContent = 'Saved!';
+                setTimeout(() => { b.textContent = 'Save Settings'; }, 1500);
+            });
+
+            document.getElementById('minimizeBtn3d').addEventListener('click', () => {
+                document.body.classList.add('minimized'); this.onResize();
+            });
+            document.getElementById('panelRestore3d').addEventListener('click', () => {
+                document.body.classList.remove('minimized'); this.onResize();
+            });
+        }
+
+        onResize() {
+            const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+            this.renderer.setSize(w, h, false);
+            this.camera.aspect = w / h;
+            this.camera.updateProjectionMatrix();
+        }
+
+        animate() {
+            requestAnimationFrame(() => this.animate());
+            this.controls.update();
+            this.renderer.render(this.scene, this.camera);
+        }
+    }
+
+    new SpiralViz3D();
+    </script>
+</body>
+</html>
