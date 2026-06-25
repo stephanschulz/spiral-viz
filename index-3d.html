@@ -104,9 +104,13 @@
                     <img src="profiles/current-profile.jpg" alt="current profile">
                     <span>Current<br>16 × 25 mm</span>
                 </div>
-                <div class="profile-opt active" data-profile="new">
+                <div class="profile-opt" data-profile="new">
                     <img src="profiles/new-profile.jpg" alt="new profile">
                     <span>New<br>4 × 12 mm</span>
+                </div>
+                <div class="profile-opt active" data-profile="new2">
+                    <img src="profiles/new2-profile.pic.jpg" alt="new2 profile">
+                    <span>New 2<br>7.5 × 12 mm</span>
                 </div>
             </div>
             <label class="ctrl" style="margin-top:10px;">Profile Scale <span class="val" id="profileScaleVal">1.0×</span>
@@ -240,7 +244,30 @@
         return pts;
     }
 
-    const PROFILES = { current: keyholeProfile(), new: roundBarProfile() };
+    function new2Profile() {
+        // new2-profile.pic.jpg: 6 mm base, 7.5 mm widest, 12.04 mm tall.
+        // Straight rectangular lower body, then a rounded dome on top (the emitting front).
+        const baseHalf = 3;            // 6 mm base width
+        const domeHalf = 3.75;         // 7.5 mm widest
+        const bodyTop = 6;             // top of the straight lower body
+        const total = 12.04;
+        const domeCy = total - domeHalf; // dome circle center height
+        const pts = [];
+        pts.push({ u: baseHalf, v: 0, emit: false });
+        pts.push({ u: baseHalf, v: bodyTop, emit: false });
+        pts.push({ u: domeHalf, v: domeCy, emit: false });   // shoulder out to widest
+        const steps = 24;
+        for (let i = 1; i <= steps; i++) {
+            const a = Math.PI * (i / steps);  // 0..PI over the top, right -> left
+            pts.push({ u: domeHalf * Math.cos(a), v: domeCy + domeHalf * Math.sin(a), emit: true });
+        }
+        // arc ends at (-domeHalf, domeCy)
+        pts.push({ u: -baseHalf, v: bodyTop, emit: false });
+        pts.push({ u: -baseHalf, v: 0, emit: false });
+        return pts;
+    }
+
+    const PROFILES = { current: keyholeProfile(), new: roundBarProfile(), new2: new2Profile() };
 
     // ---------- App ----------
     class SpiralViz3D {
@@ -255,7 +282,7 @@
             this.segmentLength = 500;    // cm
             this.segmentMounts = 27;     // count
             this.segmentGap = 0.5;       // mm
-            this.profileKey = 'new';
+            this.profileKey = 'new2';
             this.profileScale = 1;
             this.curvatureCm = 30;       // edge rise in cm (0 = flat)
             this.normalOffsetDeg = 0;    // ± tilt of the aim away from the surface normal
